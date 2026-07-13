@@ -848,21 +848,35 @@ function RelativeQvChart({ data, mainChart }: { data: any; mainChart: IChartApi 
   return <div ref={ref} className="flex-1 pt-4" />;
 }
 
+const ZSCORE_LEVELS = [-2, -1, 0, 1, 2] as const;
+const ZSCORE_LEVEL_COLORS: Record<number, string> = {
+  '-2': '#f6465d',
+  '-1': '#f6465d',
+  '0':  '#555555',
+  '1':  '#0ecb81',
+  '2':  '#0ecb81',
+};
+
 function ZScoreChart({ data, mainChart }: { data: any[]; mainChart: IChartApi | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useSubChart(ref, mainChart, (chart) => {
     data.forEach(line => {
-      const s = makeLine(chart, line.color, 1);
+      const s = makeLine(chart, line.color, 1, 0, true);
       setLineData(s, line.values);
     });
-    // Zero reference line
+
+    // Static ±2 / ±1 / 0 reference levels
     if (data[0]?.values?.length) {
       const pts = data[0].values;
-      const zero = makeLine(chart, '#2a2a2a', 1, 2);
-      zero.setData([
-        { time: (pts[0].time / 1000) as Time, value: 0 },
-        { time: (pts[pts.length - 1].time / 1000) as Time, value: 0 },
-      ]);
+      const start = (pts[0].time / 1000) as Time;
+      const end   = (pts[pts.length - 1].time / 1000) as Time;
+      ZSCORE_LEVELS.forEach(level => {
+        const levelLine = makeLine(chart, ZSCORE_LEVEL_COLORS[level], 1, 2, true);
+        levelLine.setData([
+          { time: start, value: level },
+          { time: end,   value: level },
+        ]);
+      });
     }
   }, [data, mainChart]);
   return <div ref={ref} className="flex-1 pt-4" />;
