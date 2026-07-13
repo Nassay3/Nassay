@@ -388,3 +388,13 @@ components:
               $ref: "#/components/schemas/VwapLine"
             minimumThreshold:
               $ref: "#/components/schemas/VwapLine"
+        vwapUltra1:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapLine"
+          description: VWAP ULTRA1 Custom timeframe-aware multi-period VWAP
+        vwmaMtfMap:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapLine"
+          description: VWMA Multi-Timeframe Map from higher timeframes

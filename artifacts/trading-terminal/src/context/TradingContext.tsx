@@ -11,6 +11,7 @@ export interface IndicatorSetting {
   filled?: boolean;
   fillColor?: string;
   period?: number;
+  subVisibilities?: Record<string, boolean>;
 }
 
 export interface IndicatorSettings {
@@ -35,6 +36,8 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
   'Dollar Volume': { visible: true, color: '#2962ff', lineWidth: 1, lineStyle: 0 },
   'Session Volume': { visible: true, color: '#00c853', lineWidth: 1, lineStyle: 0 },
   'Relative QV': { visible: true, color: '#ff9100', lineWidth: 2, lineStyle: 0 },
+  'VWAP ULTRA1': { visible: true, color: '#ff9800', lineWidth: 1, lineStyle: 0 },
+  'VWMA MTF Map': { visible: true, color: '#00bcd4', lineWidth: 1, lineStyle: 0 },
 };
 
 interface TradingContextType {

@@ -6,3 +6,9 @@ id = "1p7SwEAQ2Ix5gAQMR9Ekf"
 uri = "file://screenshots/trading-terminal-v5.jpg"
 type = "image"
 title = "Trading Terminal Screenshot"
+
+[[outputs]]
+id = "utEs4-QLZCPe18o-cjf7H"
+uri = "file://screenshots/trading-terminal-v6.jpg"
+type = "image"
+title = "Trading Terminal with TradingView Settings Modal"

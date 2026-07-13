@@ -59,6 +59,8 @@ export interface VwapIndicators {
     relative: VwapLine;
     minimumThreshold: VwapLine;
   };
+  vwapUltra1: VwapLine[];
+  vwmaMtfMap: VwapLine[];
 }
 
 function hlc3(c: Candle): number {
@@ -368,7 +370,95 @@ export function calculateVwapIndicators(candles: Candle[], symbol: string, inter
     dollarVolume,
     sessionVolumeAccumulated,
     relativeQv: relativeQvResult,
+    vwapUltra1: calculateVwapUltra1(candles, interval, times),
+    vwmaMtfMap: calculateVwmaMtfMap(candles, interval, times),
   };
+}
+
+// VWAP ULTRA1 Custom (Pine Script translation)
+function calculateVwapUltra1(candles: Candle[], interval: string, times: number[]): VwapLine[] {
+  const periodMap: Record<string, number[]> = {
+    "1d": [48, 175],
+    "1w": [48, 84],
+    "1M": [48, 84],
+    "240": [21, 48, 84, 175, 480, 840],
+    "720": [84, 480],
+    "360": [48, 84, 480],
+    "60": [21, 84, 175, 480, 840],
+    "45": [21, 84, 175, 480, 840],
+    "30": [21, 175, 480, 840],
+    "15": [21, 175, 480, 840],
+    "5": [84, 175],
+    "3": [84, 175],
+    "1": [84, 175],
+    "30s": [21, 48],
+    "15s": [21, 48],
+    "5s": [175],
+  };
+
+  const periods = periodMap[interval] || [84, 175];
+  const colorMap: Record<number, string> = {
+    21: "#f995ff",
+    48: "#f995ff",
+    84: "#acff35",
+    175: "#5b9cf6",
+    480: "#ffe0b2",
+    840: "#f3ff00",
+  };
+
+  return periods.map(period => {
+    const values = rollingVwap(candles, period);
+    return {
+      name: `VWAP ULTRA1 ${period}`,
+      color: colorMap[period] || "#ffffff",
+      values: times.map((t, i) => ({ time: t, value: values[i] })),
+    };
+  });
+}
+
+// VWMA MTF Map — Auto Higher TF Sets (v6) (Pine Script approximation using current timeframe data)
+function calculateVwmaMtfMap(candles: Candle[], interval: string, times: number[]): VwapLine[] {
+  const tfDefs: { tf: string; minutes: number; periods: number[] }[] = [
+    { tf: "1M", minutes: 30 * 24 * 60, periods: [48, 84, 175, 480, 840] },
+    { tf: "1W", minutes: 7 * 24 * 60, periods: [48, 84] },
+    { tf: "1D", minutes: 24 * 60, periods: [48, 175] },
+    { tf: "12h", minutes: 12 * 60, periods: [84, 480] },
+    { tf: "6h", minutes: 6 * 60, periods: [48, 84, 480] },
+    { tf: "4h", minutes: 4 * 60, periods: [21, 48, 84, 175, 480, 840] },
+    { tf: "1h", minutes: 60, periods: [21, 84, 175, 480, 840] },
+    { tf: "45m", minutes: 45, periods: [21, 84, 175, 480, 840] },
+    { tf: "15m", minutes: 15, periods: [21, 175, 480, 840] },
+    { tf: "2m", minutes: 2, periods: [84, 175] },
+    { tf: "1m", minutes: 1, periods: [84, 175] },
+    { tf: "30s", minutes: 0.5, periods: [21, 48] },
+  ];
+
+  const currentMinutes = intervalToMinutes(interval);
+  const colorMap: Record<number, string> = {
+    21: "#f995ff",
+    48: "#f995ff",
+    84: "#acff35",
+    175: "#5b9cf6",
+    480: "#ffe0b2",
+    840: "#f3ff00",
+  };
+
+  const lines: VwapLine[] = [];
+  for (const def of tfDefs) {
+    if (def.minutes <= currentMinutes) continue; // only higher timeframes
+    const ratio = def.minutes / currentMinutes;
+    for (const period of def.periods) {
+      const effectivePeriod = Math.round(period * ratio);
+      if (effectivePeriod <= 0 || effectivePeriod > candles.length) continue;
+      const values = rollingVwap(candles, effectivePeriod);
+      lines.push({
+        name: `VWMA ${period} [${def.tf}]`,
+        color: colorMap[period] || "#ffffff",
+        values: times.map((t, i) => ({ time: t, value: values[i] })),
+      });
+    }
+  }
+  return lines;
 }
 
 function intervalToMinutes(interval: string): number {

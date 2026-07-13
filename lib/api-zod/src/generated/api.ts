@@ -236,7 +236,23 @@ export const GetVwapResponse = zod.object({
   "value": zod.number().nullable()
 }))
 })
-})
+}),
+  "vwapUltra1": zod.array(zod.object({
+  "name": zod.string(),
+  "color": zod.string(),
+  "values": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+}))
+})).optional().describe('VWAP ULTRA1 Custom timeframe-aware multi-period VWAP'),
+  "vwmaMtfMap": zod.array(zod.object({
+  "name": zod.string(),
+  "color": zod.string(),
+  "values": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+}))
+})).optional().describe('VWMA Multi-Timeframe Map from higher timeframes')
 })
 
 
