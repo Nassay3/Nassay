@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import "./lib/openrouter"; // validates OPENROUTER_API_KEY on startup
 
 const rawPort = process.env["PORT"];
 
