@@ -1,0 +1,187 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Nassay
+
+//@version=6
+indicator("VWMA MTF Map — Auto Higher TF Sets (v6)", overlay=true)
+
+// ================= Settings =================
+group1 = "Toggle Higher TF sets"
+iShowMonth = input.bool(true,  "Show 1M set", inline="g1", group=group1)
+iShowWeek  = input.bool(true,  "Show 1W set", inline="g1", group=group1)
+iShowDay   = input.bool(true,  "Show 1D set", inline="g1", group=group1)
+
+group2 = "Toggle Mid TF sets"
+iShow12h   = input.bool(true,  "Show 12h set", inline="g2", group=group2)
+iShow6h    = input.bool(true,  "Show 6h set",  inline="g2", group=group2)
+iShow4h    = input.bool(true,  "Show 4h set",  inline="g2", group=group2)
+
+group3 = "Toggle Lower TF sets"
+iShow1h    = input.bool(true,  "Show 1h set",   inline="g3", group=group3)
+iShow45m   = input.bool(true,  "Show 45m set",  inline="g3", group=group3)
+iShow15m   = input.bool(true,  "Show 15m set",  inline="g3", group=group3)
+iShow2m    = input.bool(false, "Show 2m set",   inline="g3", group=group3)
+iShow1m    = input.bool(false, "Show 1m set",   inline="g3", group=group3)
+iShow30s   = input.bool(false, "Show 30s set",  inline="g3", group=group3)
+
+// ================ Colors by period ================
+fColor(len) =>
+    len == 21  ? color.new(#f995ff, 0) : len == 48  ? color.new(#f995ff, 0) :  len == 84  ? color.new(#acff35, 0) : len == 175 ? color.new(#5b9cf6, 0) : len == 480 ? color.new(#ffe0b2, 0) :  len == 840 ? color.new(#f3ff00, 0) :        color.new(color.gray, 0)
+
+// ================ Helpers ================
+hlc3 = (high + low + close) / 3.0
+
+// Rank current chart TF (higher rank = higher TF)
+getRank() =>
+    int r = 0
+    if timeframe.ismonthly
+        r := 10
+    else if timeframe.isweekly
+        r := 9
+    else if timeframe.isdaily
+        r := 8
+    else
+        s = timeframe.in_seconds()
+        r := s >= 12*3600 ? 7 :
+             s >=  6*3600 ? 6 :
+             s >=  4*3600 ? 5 :
+             s >=  1*3600 ? 4 :
+             s >=   45*60 ? 3 :
+             s >=   15*60 ? 2 :
+             s >=    2*60 ? 1 :
+             s >=       60 ? 0 :
+                              -1 // 30s
+    r
+
+curRank = getRank()
+
+// إظهار المجموعات التي رتبتها أكبر "strictly greater" من رتبة الفريم الحالي
+showM   = iShowMonth and (curRank < 10)
+showW   = iShowWeek  and (curRank < 9)
+showD   = iShowDay   and (curRank < 8)
+show12  = iShow12h   and (curRank < 7)
+show6   = iShow6h    and (curRank < 6)
+show4   = iShow4h    and (curRank < 5)
+show1h  = iShow1h    and (curRank < 4)
+show45  = iShow45m   and (curRank < 3)
+show15  = iShow15m   and (curRank < 2)
+show2   = iShow2m    and (curRank < 1)
+show1   = iShow1m    and (curRank < 0)
+show30s = iShow30s   and (curRank < -1) // لن يظهر عملياً لأنه أصغر فريم
+
+// ================ Compute VWMA per TF set ================
+// 1M: 48, 84, 175, 480, 840
+m48  = request.security(syminfo.tickerid, "1M",  ta.vwma(hlc3,  48), barmerge.gaps_off, barmerge.lookahead_off)
+m84  = request.security(syminfo.tickerid, "1M",  ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+m175 = request.security(syminfo.tickerid, "1M",  ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+m480 = request.security(syminfo.tickerid, "1M",  ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+m840 = request.security(syminfo.tickerid, "1M",  ta.vwma(hlc3, 840), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 1W: 48, 84
+w48 = request.security(syminfo.tickerid, "1W",  ta.vwma(hlc3, 48), barmerge.gaps_off, barmerge.lookahead_off)
+w84 = request.security(syminfo.tickerid, "1W",  ta.vwma(hlc3, 84), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 1D: 48, 175
+d48  = request.security(syminfo.tickerid, "1D",  ta.vwma(hlc3,  48), barmerge.gaps_off, barmerge.lookahead_off)
+d175 = request.security(syminfo.tickerid, "1D",  ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 12h: 84, 480
+h12_84  = request.security(syminfo.tickerid, "720", ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+h12_480 = request.security(syminfo.tickerid, "720", ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 6h: 48, 84, 480
+h6_48  = request.security(syminfo.tickerid, "360", ta.vwma(hlc3,  48), barmerge.gaps_off, barmerge.lookahead_off)
+h6_84  = request.security(syminfo.tickerid, "360", ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+h6_480 = request.security(syminfo.tickerid, "360", ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 4h: 21, 48, 84, 175, 480, 840
+h4_21  = request.security(syminfo.tickerid, "240", ta.vwma(hlc3,  21), barmerge.gaps_off, barmerge.lookahead_off)
+h4_48  = request.security(syminfo.tickerid, "240", ta.vwma(hlc3,  48), barmerge.gaps_off, barmerge.lookahead_off)
+h4_84  = request.security(syminfo.tickerid, "240", ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+h4_175 = request.security(syminfo.tickerid, "240", ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+h4_480 = request.security(syminfo.tickerid, "240", ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+h4_840 = request.security(syminfo.tickerid, "240", ta.vwma(hlc3, 840), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 1h: 21, 84, 175, 480, 840
+h1_21  = request.security(syminfo.tickerid, "60",  ta.vwma(hlc3,  21), barmerge.gaps_off, barmerge.lookahead_off)
+h1_84  = request.security(syminfo.tickerid, "60",  ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+h1_175 = request.security(syminfo.tickerid, "60",  ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+h1_480 = request.security(syminfo.tickerid, "60",  ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+h1_840 = request.security(syminfo.tickerid, "60",  ta.vwma(hlc3, 840), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 45m: 21, 84, 175, 480, 840
+m45_21  = request.security(syminfo.tickerid, "45",  ta.vwma(hlc3,  21), barmerge.gaps_off, barmerge.lookahead_off)
+m45_84  = request.security(syminfo.tickerid, "45",  ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+m45_175 = request.security(syminfo.tickerid, "45",  ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+m45_480 = request.security(syminfo.tickerid, "45",  ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+m45_840 = request.security(syminfo.tickerid, "45",  ta.vwma(hlc3, 840), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 15m: 21, 175, 480, 840
+m15_21  = request.security(syminfo.tickerid, "15",  ta.vwma(hlc3,  21), barmerge.gaps_off, barmerge.lookahead_off)
+m15_175 = request.security(syminfo.tickerid, "15",  ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+m15_480 = request.security(syminfo.tickerid, "15",  ta.vwma(hlc3, 480), barmerge.gaps_off, barmerge.lookahead_off)
+m15_840 = request.security(syminfo.tickerid, "15",  ta.vwma(hlc3, 840), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 2m: 84, 175
+m2_84  = request.security(syminfo.tickerid, "2",   ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+m2_175 = request.security(syminfo.tickerid, "2",   ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 1m: 84, 175
+m1_84  = request.security(syminfo.tickerid, "1",   ta.vwma(hlc3,  84), barmerge.gaps_off, barmerge.lookahead_off)
+m1_175 = request.security(syminfo.tickerid, "1",   ta.vwma(hlc3, 175), barmerge.gaps_off, barmerge.lookahead_off)
+
+// 30s: 21, 48
+s30_21 = request.security(syminfo.tickerid, "30S", ta.vwma(hlc3,  21), barmerge.gaps_off, barmerge.lookahead_off)
+s30_48 = request.security(syminfo.tickerid, "30S", ta.vwma(hlc3,  48), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ================ Plots (gated) ================
+plot(showM  ? m48   : na, title="VWMA 48  [1M]",  color=fColor(48),  linewidth=2)
+plot(showM  ? m84   : na, title="VWMA 84  [1M]",  color=fColor(84),  linewidth=2)
+plot(showM  ? m175  : na, title="VWMA 175 [1M]",  color=fColor(175), linewidth=2)
+plot(showM  ? m480  : na, title="VWMA 480 [1M]",  color=fColor(480), linewidth=2)
+plot(showM  ? m840  : na, title="VWMA 840 [1M]",  color=fColor(840), linewidth=2)
+
+plot(showW  ? w48   : na, title="VWMA 48  [1W]",  color=fColor(48),  linewidth=2)
+plot(showW  ? w84   : na, title="VWMA 84  [1W]",  color=fColor(84),  linewidth=2)
+
+plot(showD  ? d48   : na, title="VWMA 48  [1D]",  color=fColor(48),  linewidth=2)
+plot(showD  ? d175  : na, title="VWMA 175 [1D]",  color=fColor(175), linewidth=2)
+
+plot(show12 ? h12_84  : na, title="VWMA 84  [12h]", color=fColor(84),  linewidth=2)
+plot(show12 ? h12_480 : na, title="VWMA 480 [12h]", color=fColor(480), linewidth=2)
+
+plot(show6  ? h6_48  : na, title="VWMA 48  [6h]",  color=fColor(48),  linewidth=2)
+plot(show6  ? h6_84  : na, title="VWMA 84  [6h]",  color=fColor(84),  linewidth=2)
+plot(show6  ? h6_480 : na, title="VWMA 480 [6h]",  color=fColor(480), linewidth=2)
+
+plot(show4  ? h4_21  : na, title="VWMA 21  [4h]",  color=fColor(21),  linewidth=2)
+plot(show4  ? h4_48  : na, title="VWMA 48  [4h]",  color=fColor(48),  linewidth=2)
+plot(show4  ? h4_84  : na, title="VWMA 84  [4h]",  color=fColor(84),  linewidth=2)
+plot(show4  ? h4_175 : na, title="VWMA 175 [4h]",  color=fColor(175), linewidth=2)
+plot(show4  ? h4_480 : na, title="VWMA 480 [4h]",  color=fColor(480), linewidth=2)
+plot(show4  ? h4_840 : na, title="VWMA 840 [4h]",  color=fColor(840), linewidth=2)
+
+plot(show1h ? h1_21  : na, title="VWMA 21  [1h]",  color=fColor(21),  linewidth=2)
+plot(show1h ? h1_84  : na, title="VWMA 84  [1h]",  color=fColor(84),  linewidth=2)
+plot(show1h ? h1_175 : na, title="VWMA 175 [1h]",  color=fColor(175), linewidth=2)
+plot(show1h ? h1_480 : na, title="VWMA 480 [1h]",  color=fColor(480), linewidth=2)
+plot(show1h ? h1_840 : na, title="VWMA 840 [1h]",  color=fColor(840), linewidth=2)
+
+plot(show45 ? m45_21  : na, title="VWMA 21  [45m]", color=fColor(21),  linewidth=2)
+plot(show45 ? m45_84  : na, title="VWMA 84  [45m]", color=fColor(84),  linewidth=2)
+plot(show45 ? m45_175 : na, title="VWMA 175 [45m]", color=fColor(175), linewidth=2)
+plot(show45 ? m45_480 : na, title="VWMA 480 [45m]", color=fColor(480), linewidth=2)
+plot(show45 ? m45_840 : na, title="VWMA 840 [45m]", color=fColor(840), linewidth=2)
+
+plot(show15 ? m15_21  : na, title="VWMA 21  [15m]", color=fColor(21),  linewidth=2)
+plot(show15 ? m15_175 : na, title="VWMA 175 [15m]", color=fColor(175), linewidth=2)
+plot(show15 ? m15_480 : na, title="VWMA 480 [15m]", color=fColor(480), linewidth=2)
+plot(show15 ? m15_840 : na, title="VWMA 840 [15m]", color=fColor(840), linewidth=2)
+
+plot(show2  ? m2_84  : na, title="VWMA 84  [2m]",  color=fColor(84),  linewidth=2)
+plot(show2  ? m2_175 : na, title="VWMA 175 [2m]",  color=fColor(175), linewidth=2)
+
+plot(show1  ? m1_84  : na, title="VWMA 84  [1m]",  color=fColor(84),  linewidth=2)
+plot(show1  ? m1_175 : na, title="VWMA 175 [1m]",  color=fColor(175), linewidth=2)
+
+plot(show30s ? s30_21 : na, title="VWMA 21  [30s]", color=fColor(21),  linewidth=2)
+plot(show30s ? s30_48 : na, title="VWMA 48  [30s]", color=fColor(48),  linewidth=2)

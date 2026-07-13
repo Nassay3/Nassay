@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "1p7SwEAQ2Ix5gAQMR9Ekf"
+uri = "file://screenshots/trading-terminal-v5.jpg"
+type = "image"
+title = "Trading Terminal Screenshot"

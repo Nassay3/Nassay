@@ -1,0 +1,114 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Nassay
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Nassay
+
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Nassay
+
+
+//@version=5
+indicator("VWAP ULTRA1 Custom", overlay=true)
+
+// حساب VWAP
+typicalPrice = (high + low + close) / 3
+typicalPriceVolume = typicalPrice * volume
+
+// دالة حساب الـ VWAP لفترة معينة
+vwapCalc(period) =>
+    cumulativeTypicalPriceVolume = ta.sma(typicalPriceVolume, period) * period
+    cumulativeVolume = ta.sma(volume, period) * period
+    vwapValue = cumulativeTypicalPriceVolume / cumulativeVolume
+    vwapValue
+
+// تعريف المتغيرات بنوع float وقيمتها الافتراضية na
+float vwap_21 = na
+float vwap_48 = na
+float vwap_84 = na
+float vwap_175 = na
+float vwap_480 = na
+float vwap_840 = na
+
+// مقارنة الفريم الزمني باستخدام timeframe.period
+if (timeframe.isdaily)  // الفريم اليومي
+    vwap_48 := vwapCalc(48)
+    vwap_175 := vwapCalc(175)
+
+if (timeframe.isweekly)  // الفريم الأسبوعي
+    vwap_48 := vwapCalc(48)
+    vwap_84 := vwapCalc(84)
+if (timeframe.ismonthly)  // الفريم الشهري
+    vwap_48 := vwapCalc(48)
+    vwap_84 := vwapCalc(84)
+    
+
+if (timeframe.isintraday) // الفريمات الداخلية
+    if (timeframe.period == "240")  // فريم 4 ساعات
+        vwap_21 := vwapCalc(21)
+        vwap_48 := vwapCalc(48)
+        vwap_84 := vwapCalc(84)
+        vwap_175 := vwapCalc(175)
+        vwap_480 := vwapCalc(480)
+        vwap_840 := vwapCalc(840)
+
+    if (timeframe.period == "720")  // فريم 12 ساعة
+        vwap_84 := vwapCalc(84)
+        vwap_480 := vwapCalc(480)
+
+    if (timeframe.period == "360")  // فريم 6 ساعات
+        vwap_48 := vwapCalc(48)
+        vwap_84 := vwapCalc(84)
+        vwap_480 := vwapCalc(480)
+
+    if (timeframe.period == "60")  // فريم 1 ساعة
+        vwap_21 := vwapCalc(21)
+        vwap_84 := vwapCalc(84)
+        vwap_175 := vwapCalc(175)
+        vwap_480 := vwapCalc(480)
+        vwap_840 := vwapCalc(840)
+
+    if (timeframe.period == "45")  // فريم 45 دقيقة
+        vwap_21 := vwapCalc(21)
+        vwap_84 := vwapCalc(84)
+        vwap_175 := vwapCalc(175)
+        vwap_480 := vwapCalc(480)
+        vwap_840 := vwapCalc(840)
+    if (timeframe.period == "30")  // فريم 30 دقيقة
+        vwap_21 := vwapCalc(21)
+        vwap_175 := vwapCalc(175)
+        vwap_480 := vwapCalc(480)
+        vwap_840 := vwapCalc(840)
+
+    if (timeframe.period == "15")  // فريم 15 دقيقة
+        vwap_21 := vwapCalc(21)
+        vwap_175 := vwapCalc(175)
+        vwap_480 := vwapCalc(480)
+        vwap_840 := vwapCalc(840)
+
+    if (timeframe.period == "2")  // فريم 2 دقائق
+        vwap_84 := vwapCalc(84)
+        vwap_175 := vwapCalc(175)
+
+    if (timeframe.period == "1")  // فريم 1 دقيقة
+        vwap_84 := vwapCalc(84)
+        vwap_175 := vwapCalc(175)
+
+    if (timeframe.period == "30S")  // فريم 30 ثانية
+        vwap_21 := vwapCalc(21)
+        vwap_48 := vwapCalc(48)
+
+    if (timeframe.period == "15S")  // فريم 15 ثانية
+        vwap_21 := vwapCalc(21)
+        vwap_48 := vwapCalc(48)
+
+    if (timeframe.period == "5S")  // فريم 5 ثواني
+        vwap_175 := vwapCalc(175)
+
+// رسم الخطوط بالألوان والتنسيقات المطلوبة
+plot(vwap_21, title="VWAP 21", color=color.new(#f995ff, 90), style=plot.style_circles, linewidth=1)
+plot(vwap_48, title="VWAP 48", color=color.new(#f995ff, 90), style=plot.style_circles, linewidth=1)
+plot(vwap_84, title="VWAP 84", color=color.new(#acff35, 90), style=plot.style_circles, linewidth=1)
+plot(vwap_175, title="VWAP 175", color=color.new(#5b9cf6, 90), style=plot.style_circles)
+plot(vwap_480, title="VWAP 480", color=color.new(#ffe0b2, 90), style=plot.style_circles)
+plot(vwap_840, title="VWAP 840", color=color.new(#f3ff00, 90), style=plot.style_circles)
+
