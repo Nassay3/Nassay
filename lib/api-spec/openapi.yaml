@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: market
+    description: Market data from Binance Data Vision and live streams
 paths:
   /healthz:
     get:
@@ -24,6 +26,103 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /market/symbols:
+    get:
+      operationId: listSymbols
+      tags: [market]
+      summary: List USDT trading pairs
+      description: Returns all available USDT symbols from Binance with metadata
+      parameters:
+        - name: quote
+          in: query
+          required: false
+          schema:
+            type: string
+            default: USDT
+      responses:
+        "200":
+          description: List of symbols
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SymbolListResponse"
+  /market/history:
+    get:
+      operationId: getHistory
+      tags: [market]
+      summary: Get historical candlestick data from Binance Data Vision
+      description: Returns historical candlestick data loaded from Binance Data Vision
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/SymbolParam"
+        - name: interval
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/IntervalParam"
+        - name: days
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DaysParam"
+      responses:
+        "200":
+          description: Historical candlestick data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlineResponse"
+  /market/vwap:
+    get:
+      operationId: getVwap
+      tags: [market]
+      summary: Calculate VWAP indicators
+      description: Calculates all VWAP indicators from historical candles
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/SymbolParam"
+        - name: interval
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/IntervalParam"
+        - name: days
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DaysParam"
+      responses:
+        "200":
+          description: VWAP indicators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VwapResponse"
+  /market/ticker/24hr:
+    get:
+      operationId: get24hrTicker
+      tags: [market]
+      summary: Get 24-hour ticker statistics
+      description: Returns 24-hour ticker statistics from Binance
+      parameters:
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/SymbolParam"
+      responses:
+        "200":
+          description: 24hr ticker statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TickerListResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +132,259 @@ components:
           type: string
       required:
         - status
-
+    SymbolParam:
+      type: string
+    IntervalParam:
+      type: string
+      default: 1m
+    DaysParam:
+      type: integer
+      default: 5
+    SymbolInfo:
+      type: object
+      required: [symbol, baseAsset, quoteAsset, status, minPrice, maxPrice, tickSize, minQty, stepSize]
+      properties:
+        symbol:
+          type: string
+        baseAsset:
+          type: string
+        quoteAsset:
+          type: string
+        status:
+          type: string
+        minPrice:
+          type: string
+        maxPrice:
+          type: string
+        tickSize:
+          type: string
+        minQty:
+          type: string
+        stepSize:
+          type: string
+    SymbolListResponse:
+      type: object
+      required: [symbols, count]
+      properties:
+        symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/SymbolInfo"
+        count:
+          type: integer
+    KlineCandle:
+      type: object
+      required: [openTime, closeTime, open, high, low, close, volume, quoteVolume, trades, takerBuyBaseVolume, takerBuyQuoteVolume]
+      properties:
+        openTime:
+          type: integer
+        closeTime:
+          type: integer
+        open:
+          type: string
+        high:
+          type: string
+        low:
+          type: string
+        close:
+          type: string
+        volume:
+          type: string
+        quoteVolume:
+          type: string
+        trades:
+          type: integer
+        takerBuyBaseVolume:
+          type: string
+        takerBuyQuoteVolume:
+          type: string
+    KlineResponse:
+      type: object
+      required: [symbol, interval, candles]
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+        candles:
+          type: array
+          items:
+            $ref: "#/components/schemas/KlineCandle"
+    TickerInfo:
+      type: object
+      required: [symbol, priceChange, priceChangePercent, weightedAvgPrice, prevClosePrice, lastPrice, lastQty, bidPrice, bidQty, askPrice, askQty, openPrice, highPrice, lowPrice, volume, quoteVolume, openTime, closeTime, firstId, lastId, count]
+      properties:
+        symbol:
+          type: string
+        priceChange:
+          type: string
+        priceChangePercent:
+          type: string
+        weightedAvgPrice:
+          type: string
+        prevClosePrice:
+          type: string
+        lastPrice:
+          type: string
+        lastQty:
+          type: string
+        bidPrice:
+          type: string
+        bidQty:
+          type: string
+        askPrice:
+          type: string
+        askQty:
+          type: string
+        openPrice:
+          type: string
+        highPrice:
+          type: string
+        lowPrice:
+          type: string
+        volume:
+          type: string
+        quoteVolume:
+          type: string
+        openTime:
+          type: integer
+        closeTime:
+          type: integer
+        firstId:
+          type: integer
+        lastId:
+          type: integer
+        count:
+          type: integer
+    TickerListResponse:
+      type: object
+      required: [tickers, count]
+      properties:
+        tickers:
+          type: array
+          items:
+            $ref: "#/components/schemas/TickerInfo"
+        count:
+          type: integer
+    VwapLine:
+      type: object
+      required: [name, color, values]
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+        values:
+          type: array
+          items:
+            type: object
+            required: [time, value]
+            properties:
+              time:
+                type: integer
+              value:
+                type: ["number", "null"]
+    VwapBand:
+      type: object
+      required: [name, upperColor, lowerColor, upper, lower]
+      properties:
+        name:
+          type: string
+        upperColor:
+          type: string
+        lowerColor:
+          type: string
+        upper:
+          type: array
+          items:
+            type: object
+            required: [time, value]
+            properties:
+              time:
+                type: integer
+              value:
+                type: ["number", "null"]
+        lower:
+          type: array
+          items:
+            type: object
+            required: [time, value]
+            properties:
+              time:
+                type: integer
+              value:
+                type: ["number", "null"]
+    VwapSession:
+      type: object
+      required: [name, vwap, bands]
+      properties:
+        name:
+          type: string
+        vwap:
+          $ref: "#/components/schemas/VwapLine"
+        bands:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapBand"
+    VwapResponse:
+      type: object
+      required: [symbol, interval, multiPeriodVwaps, dailyVwap, weeklyVwap, sessions, dollarVolume, sessionVolumeAccumulated, relativeQv]
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+        multiPeriodVwaps:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapLine"
+        dailyVwap:
+          type: object
+          required: [current, previous]
+          properties:
+            current:
+              $ref: "#/components/schemas/VwapLine"
+            previous:
+              $ref: "#/components/schemas/VwapLine"
+        weeklyVwap:
+          type: object
+          required: [current, previous]
+          properties:
+            current:
+              $ref: "#/components/schemas/VwapLine"
+            previous:
+              $ref: "#/components/schemas/VwapLine"
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapSession"
+        dollarVolume:
+          type: object
+          required: [perCandle, sma30, minimumThreshold, optimalThreshold]
+          properties:
+            perCandle:
+              $ref: "#/components/schemas/VwapLine"
+            sma30:
+              $ref: "#/components/schemas/VwapLine"
+            minimumThreshold:
+              $ref: "#/components/schemas/VwapLine"
+            optimalThreshold:
+              $ref: "#/components/schemas/VwapLine"
+        sessionVolumeAccumulated:
+          type: object
+          required: [accumulated, minimumThreshold, optimalThreshold]
+          properties:
+            accumulated:
+              $ref: "#/components/schemas/VwapLine"
+            minimumThreshold:
+              $ref: "#/components/schemas/VwapLine"
+            optimalThreshold:
+              $ref: "#/components/schemas/VwapLine"
+        relativeQv:
+          type: object
+          required: [relative, minimumThreshold]
+          properties:
+            relative:
+              $ref: "#/components/schemas/VwapLine"
+            minimumThreshold:
+              $ref: "#/components/schemas/VwapLine"

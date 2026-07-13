@@ -1,0 +1,33 @@
+export function formatNumber(num: number | string, decimals: number = 2): string {
+  const n = typeof num === 'string' ? parseFloat(num) : num;
+  if (isNaN(n)) return '0.00';
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(n);
+}
+
+export function formatVolume(num: number | string): string {
+  const n = typeof num === 'string' ? parseFloat(num) : num;
+  if (isNaN(n)) return '0';
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
+  return formatNumber(n, 2);
+}
+
+export function determineTickSizeDecimals(tickSize?: string | number): number {
+  if (!tickSize) return 2;
+  const tickStr = String(tickSize);
+  if (tickStr.includes('.')) {
+    const decimals = tickStr.split('.')[1];
+    // Find the last non-zero
+    let count = 0;
+    for (let i = 0; i < decimals.length; i++) {
+      count++;
+      if (decimals[i] !== '0') break;
+    }
+    return Math.max(2, count);
+  }
+  return 2;
+}

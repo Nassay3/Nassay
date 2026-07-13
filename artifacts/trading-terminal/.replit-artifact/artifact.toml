@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Trading Terminal"
+version = "1.0.0"
+id = "artifacts/trading-terminal"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24411
+
+[services.development]
+run = "pnpm --filter @workspace/trading-terminal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/trading-terminal", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/trading-terminal/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24411"
+BASE_PATH = "/"

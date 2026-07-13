@@ -1,0 +1,445 @@
+# Tradingview Scripts
+
+# Multi VWAPS Period Based (best for crypto )
+
+!Untitled
+
+```python
+study("VWAP ULTRA", overlay=true)
+
+typicalPrice = (high + low + close) / 3
+typicalPriceVolume = typicalPrice * volume
+
+cumulativePeriod1 = input(21, "Period")
+cumulativeTypicalPriceVolume1 = sum(typicalPriceVolume, cumulativePeriod1)
+cumulativeVolume1 = sum(volume, cumulativePeriod1)
+vwapValue1 = cumulativeTypicalPriceVolume1 / cumulativeVolume1
+plot(vwapValue1,title='21',color=#35e8ff,style=circles)
+
+cumulativePeriod2 = input(48)
+cumulativeTypicalPriceVolume2 = sum(typicalPriceVolume, cumulativePeriod2)
+cumulativeVolume2 = sum(volume, cumulativePeriod2)
+vwapValue2 = cumulativeTypicalPriceVolume2 / cumulativeVolume2
+plot(vwapValue2,title='48',color=#f995ff,style=circles,transp=1,linewidth=1)
+
+cumulativePeriod3 = input(84,"Period3")
+cumulativeTypicalPriceVolume3 = sum(typicalPriceVolume, cumulativePeriod3)
+cumulativeVolume3 = sum(volume, cumulativePeriod3)
+vwapValue3 = cumulativeTypicalPriceVolume3 / cumulativeVolume3
+plot(vwapValue3,title='84',color=#acff35,style=circles,transp=1,linewidth=1)
+
+cumulativePeriod4 = input(175,"Period4")
+cumulativeTypicalPriceVolume4 = sum(typicalPriceVolume, cumulativePeriod4)
+cumulativeVolume4 = sum(volume, cumulativePeriod4)
+vwapValue4 = cumulativeTypicalPriceVolume4 / cumulativeVolume4
+plot(vwapValue4,title='175',color=#5b9cf6,style=circles,transp=1)
+
+cumulativePeriod5 = input(480,"Period5")
+cumulativeTypicalPriceVolume5 = sum(typicalPriceVolume, cumulativePeriod5)
+cumulativeVolume5 = sum(volume, cumulativePeriod5)
+vwapValue5 = cumulativeTypicalPriceVolume5 / cumulativeVolume5
+plot(vwapValue5,title='480',color=#ffe0b2,style=circles,transp=1)
+
+cumulativePeriod6 = input(840,"Period6")
+cumulativeTypicalPriceVolume6 = sum(typicalPriceVolume, cumulativePeriod6)
+cumulativeVolume6 = sum(volume, cumulativePeriod6)
+vwapValue6 = cumulativeTypicalPriceVolume6 / cumulativeVolume6
+plot(vwapValue6,title='840',color=#f3ff00,style=circles,transp=1)
+
+```
+
+# Daily Vwap + Prev days vwaps ( act like POC and HVN’S)
+
+!Untitled
+
+```python
+study(title="VWAP Daily",overlay=true)
+
+TimeFrame = input('D')
+start = security(tickerid, TimeFrame, time)
+
+//------------------------------------------------
+newSession = iff(change(start), 1, 0)
+//------------------------------------------------
+vwapsum = iff(newSession, hl2*volume, vwapsum[1]+hl2*volume)
+volumesum = iff(newSession, volume, volumesum[1]+volume)
+v2sum = iff(newSession, volume*hl2*hl2, v2sum[1]+volume*hl2*hl2)
+myvwap = vwapsum/volumesum
+dev = sqrt(max(v2sum/volumesum - myvwap*myvwap, 0))
+Coloring=close>myvwap?#9598a1:red
+av=myvwap
+showBcol = input(false, type=bool, title="Show barcolors")
+showPrevVWAP = input(true, type=bool, title="Show previous VWAP close")
+prevwap = iff(newSession, myvwap[1], prevwap[1])
+plot(showPrevVWAP ? prevwap : na, style=circles, color=close > prevwap ? #9598a1 : red, linewidth = 2)
+
+A=plot(av, style=circles, color=Coloring, linewidth=2)
+
+barcolor(showBcol?Coloring:na)
+
+```
+
+# Weekly VWAP + Prev weeks vwap
+
+!Untitled
+
+```python
+study(title="VWAP Weekly",overlay=true)
+
+TimeFrame = input('W')
+start = security(tickerid, TimeFrame, time)
+
+//------------------------------------------------
+newSession = iff(change(start), 1, 0)
+//------------------------------------------------
+vwapsum = iff(newSession, hl2*volume, vwapsum[1]+hl2*volume)
+volumesum = iff(newSession, volume, volumesum[1]+volume)
+v2sum = iff(newSession, volume*hl2*hl2, v2sum[1]+volume*hl2*hl2)
+myvwap = vwapsum/volumesum
+dev = sqrt(max(v2sum/volumesum - myvwap*myvwap, 0))
+Coloring=close>myvwap?#673ab7:red
+av=myvwap
+showBcol = input(false, type=bool, title="Show barcolors")
+showPrevVWAP = input(true, type=bool, title="Show previous VWAP close")
+prevwap = iff(newSession, myvwap[1], prevwap[1])
+plot(showPrevVWAP ? prevwap : na, style=circles, color=close > prevwap ? #673ab7 : red, linewidth = 2)
+
+A=plot(av, style=circles, color=Coloring)
+
+barcolor(showBcol?Coloring:na)
+```
+
+# Session VWAP with Bands  ( Or use turbo vwap )
+
+!Untitled
+
+```
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TJ_667
+
+// Koalafied VWAP Session/Day
+
+// VWAP and Standard Deviation Bands for intra-day sessions.
+// Intra-day sessions be default are set to 
+//      - Asia session
+//      - London Session
+//      - New York Session
+
+// Day broken up as a 24 hour period consists of different market participents and therefore different behaviour. 
+// Daily VWAP and Standard Deviation Bands (1 & 2) can be overlayed.  
+
+//@version=5
+indicator('Session VWAP', '', true)
+
+// ---------- Functions ---------- //
+
+// TradingView vwap function. Taken out stdev calcs to put in seperate function. 
+computeVWAP(src, isNewPeriod) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+    var float sumSrcSrcVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	// sumSrcSrcVol calculates the dividend of the equation that is later used to calculate the standard deviation
+	sumSrcSrcVol := isNewPeriod ? volume * math.pow(src, 2) : volume * math.pow(src, 2) + sumSrcSrcVol[1]
+
+	_vwap = sumSrcVol / sumVol
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+
+	[_vwap, stDev]
+
+// Standard Deviation Band calculation function
+compute_stDEV(_vwap, stDev, stDevMultiplier_1, stDevMultiplier_2) =>
+
+    upperBand_2 = _vwap + stDev * stDevMultiplier_2
+    upperBand_1 = _vwap + stDev * stDevMultiplier_1
+    lowerBand_1 = _vwap - stDev * stDevMultiplier_1
+    lowerBand_2 = _vwap - stDev * stDevMultiplier_2
+    
+    [upperBand_2, upperBand_1, lowerBand_1, lowerBand_2]
+
+// Label function from sbtnc - Daily Weekly Monthly Opens script
+f_drawLabel(_x, _y, _text, _textcolor, _style, _size) =>
+    var _label = label.new(x=_x, y=_y, text=_text, textcolor=_textcolor, style=_style, size=_size, xloc=xloc.bar_time)
+
+    label.set_xy(_label, _x, _y)
+
+//-------------------- Inputs --------------------//
+
+showvS = input(true, 'Show Session VWAP')
+showStd_S = input(false, 'Show Session Std Dev Bands')
+showvD = input(true, 'Show Daily VWAP')
+showStd_D = input(false, 'Show Daily Std Dev Bands')
+showD_label = input(true, 'Show Daily Labels')
+showS_label = input(true, 'Show Session Labels')
+
+stDevMultiplier_1 = input(1.0, "StDev mult 1")
+stDevMultiplier_2 = input(2.0, "StDev mult 2")
+
+src = input(hlc3, "VWAP Source")
+
+off_mult = input(10, 'Label offset')
+var DEFAULT_LABEL_SIZE = size.small
+var DEFAULT_LABEL_STYLE = label.style_none
+ll_offset = timenow + math.round(ta.change(time) * off_mult)
+
+// Session Times - Time decleration code taken from Single Prints - Session Initial Balances - Frien_dd
+Asia_session_full = input.session('0000-0800', 'Asia Session')
+London_session_full = input.session('0800-1430', 'London Session')
+NY_session_full = input.session('1430-0000', 'NY Session')
+
+timeIsAllowed_Asia_full = time(timeframe.period, Asia_session_full + ':1234567')
+timeIsAllowed_London_full = time(timeframe.period, London_session_full + ':1234567')
+timeIsAllowed_NY_full = time(timeframe.period, NY_session_full + ':1234567')
+
+//-------------------- VWAP Calculations --------------------//
+
+// Asia
+p_Asia = hlc3 * volume
+p_Asia := timeIsAllowed_Asia_full and not timeIsAllowed_Asia_full[1] ? hlc3 * volume : p_Asia[1] + hlc3 * volume
+
+vol_Asia = 0.0
+vol_Asia := timeIsAllowed_Asia_full and not timeIsAllowed_Asia_full[1] ? volume : vol_Asia[1] + volume
+
+v_Asia = p_Asia / vol_Asia
+mv_Asia = v_Asia
+A_vwap = mv_Asia
+
+Sn_Asia = 0.0
+Sn_Asia := timeIsAllowed_Asia_full and not timeIsAllowed_Asia_full[1] ? 0 : Sn_Asia[1] + volume * (hlc3 - v_Asia[1]) * (hlc3 - mv_Asia)
+std_Asia = math.sqrt(Sn_Asia / vol_Asia)
+
+// London
+p_London = hlc3 * volume
+p_London := timeIsAllowed_London_full and not timeIsAllowed_London_full[1] ? hlc3 * volume : p_London[1] + hlc3 * volume
+
+vol_London = 0.0
+vol_London := timeIsAllowed_London_full and not timeIsAllowed_London_full[1] ? volume : vol_London[1] + volume
+
+v_London = p_London / vol_London
+mv_London = v_London
+L_vwap = mv_London
+
+Sn_London = 0.0
+Sn_London := timeIsAllowed_London_full and not timeIsAllowed_London_full[1] ? 0 : Sn_London[1] + volume * (hlc3 - v_London[1]) * (hlc3 - mv_London)
+std_London = math.sqrt(Sn_London / vol_London)
+
+// NY
+p_NY = hlc3 * volume
+p_NY := timeIsAllowed_NY_full and not timeIsAllowed_NY_full[1] ? hlc3 * volume : p_NY[1] + hlc3 * volume
+
+vol_NY = 0.0
+vol_NY := timeIsAllowed_NY_full and not timeIsAllowed_NY_full[1] ? volume : vol_NY[1] + volume
+
+v_NY = p_NY / vol_NY
+mv_NY = v_NY
+NY_vwap = mv_NY
+
+Sn_NY = 0.0
+Sn_NY := timeIsAllowed_NY_full and not timeIsAllowed_NY_full[1] ? 0 : Sn_NY[1] + volume * (hlc3 - v_NY[1]) * (hlc3 - mv_NY)
+std_NY = math.sqrt(Sn_NY / vol_NY)
+
+// Plot VWAP
+A = plot(showvS and timeIsAllowed_Asia_full ? A_vwap : na, title='Asia VWAP', color=color.new(color.yellow, 0), linewidth=1, style=plot.style_linebr)
+f_drawLabel(ll_offset, showS_label and showvS and timeIsAllowed_Asia_full ? A_vwap : na, '     --- vAsia   ', color.yellow, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+L = plot(showvS and timeIsAllowed_London_full ? L_vwap : na, title='London VWAP', color=color.new(color.blue, 0), linewidth=1, style=plot.style_linebr)
+f_drawLabel(ll_offset, showS_label and showvS and timeIsAllowed_London_full ? L_vwap : na, '     --- vLondon   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+N = plot(showvS and timeIsAllowed_NY_full ? NY_vwap : na, title='New York VWAP', color=color.new(color.red, 0), linewidth=1, style=plot.style_linebr)
+f_drawLabel(ll_offset, showS_label and showvS and timeIsAllowed_NY_full ? NY_vwap : na, '     --- vNY   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+//-------------------- Plot Standard Deviation Bands --------------------//
+
+[s2up_A, s1up_A, s1dn_A, s2dn_A] = compute_stDEV(A_vwap, std_Asia, stDevMultiplier_1, stDevMultiplier_2)
+[s2up_L, s1up_L, s1dn_L, s2dn_L] = compute_stDEV(L_vwap, std_London, stDevMultiplier_1, stDevMultiplier_2)
+[s2up_NY, s1up_NY, s1dn_NY, s2dn_NY] = compute_stDEV(NY_vwap, std_NY, stDevMultiplier_1, stDevMultiplier_2)
+
+// Asia Standard Deviation Bands
+
+sd2up_A = plot(showStd_S and timeIsAllowed_Asia_full ? s2up_A : na, title='VWAP_Asia - STDEV +2', color=color.new(color.red, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_Asia_full ? s2up_A : na, '     --- vA SD+2   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1up_A = plot(showStd_S and timeIsAllowed_Asia_full ? s1up_A : na, title='VWAP_Asia - STDEV +1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_Asia_full ? s1up_A : na, '     --- vA SD+1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1dn_A = plot(showStd_S and timeIsAllowed_Asia_full ? s1dn_A : na, title='VWAP_Asia - STDEV -1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_Asia_full ?s1dn_A : na, '     --- vA SD-1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd2dn_A = plot(showStd_S and timeIsAllowed_Asia_full ? s2dn_A : na, title='VWAP_Asia - STDEV -2', color=color.new(color.blue, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_Asia_full ? s2dn_A : na, '     --- vA SD-2   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+// London Standard Deviation Bands
+
+sd2up_L = plot(showStd_S and timeIsAllowed_London_full ? s2up_L : na, title='VWAP_London - STDEV +2', color=color.new(color.red, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_London_full ? s2up_L : na, '     --- vL SD+2   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1up_L = plot(showStd_S and timeIsAllowed_London_full ? s1up_L : na, title='VWAP_London - STDEV +1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_London_full ? s1up_L : na, '     --- vL SD+1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1dn_L = plot(showStd_S and timeIsAllowed_London_full ? s1dn_L : na, title='VWAP_London - STDEV -1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_London_full ? s1dn_L : na, '     --- vL SD-1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd2dn_L = plot(showStd_S and timeIsAllowed_London_full ? s2dn_L : na, title='VWAP_London - STDEV -2', color=color.new(color.blue, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_London_full ? s2dn_L : na, '     --- vL SD-2   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+// NY Standard Deviation Bands
+
+sd2up_NY = plot(showStd_S and timeIsAllowed_NY_full ? s2up_NY : na, title='VWAP_NY - STDEV +2', color=color.new(color.red, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_NY_full ? s2up_NY : na, '     --- vNY SD+2   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1up_NY = plot(showStd_S and timeIsAllowed_NY_full ? s1up_NY : na, title='VWAP_NY - STDEV +1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_NY_full ? s1up_NY : na, '     --- vNY SD+1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd1dn_NY = plot(showStd_S and timeIsAllowed_NY_full ?s1dn_NY : na, title='VWAP_NY - STDEV -1', color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_NY_full ? s1dn_NY : na, '     --- vNY SD-1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+sd2dn_NY = plot(showStd_S and timeIsAllowed_NY_full ? s2dn_NY : na, title='VWAP_NY - STDEV -2', color=color.new(color.blue, 80), style=plot.style_linebr, linewidth=3)
+f_drawLabel(ll_offset, showS_label and showStd_S and timeIsAllowed_NY_full ? s2dn_NY : na, '     --- vNY SD-2   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+//-------------------- VWAP Day --------------------//
+
+timeChange(period) =>
+	ta.change(time(period))
+
+newSessionD = timeChange("D")
+[vD, stdevD] = computeVWAP(src, newSessionD)
+
+// Standard deviation calculations
+[s2up_D, s1up_D, s1dn_D, s2dn_D] = compute_stDEV(vD, stdevD, stDevMultiplier_1, stDevMultiplier_2)
+
+// VWAP
+plot(showvD and not showvS ? vD : na, title='VWAP - Daily', color=color.new(color.gray, 0), style=plot.style_linebr, linewidth=1)
+plot(showvD and showvS and not timeIsAllowed_Asia_full ? vD : na, title='VWAP - Daily', color=color.new(color.gray, 0), style=plot.style_linebr, linewidth=1)
+f_drawLabel(ll_offset, showD_label and showvD and not showvS ? vD : na, '     --- vD   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+f_drawLabel(ll_offset, showD_label and showvD and showvS and not timeIsAllowed_Asia_full ? vD : na, '     --- vD   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+// Std Dev
+plot(showStd_D ? s1up_D : na, title='VWAP Day - STDEV +1', color=color.new(color.gray, 30), style=plot.style_circles, linewidth=1)
+f_drawLabel(ll_offset, showD_label and showStd_D and not showStd_S ? s1up_D : na, '     --- vD SD+1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+f_drawLabel(ll_offset, showD_label and showStd_D and showStd_S and not timeIsAllowed_Asia_full ? s1up_D : na, '     --- vD SD+1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+plot(showStd_D ? s1dn_D : na, title='VWAP Day - STDEV -1', color=color.new(color.gray, 30), style=plot.style_circles, linewidth=1)
+f_drawLabel(ll_offset, showD_label and showStd_D and not showStd_S ? s1dn_D : na, '     --- vD SD-1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+f_drawLabel(ll_offset, showD_label and showStd_D and showStd_S and not timeIsAllowed_Asia_full ? s1dn_D : na, '     --- vD SD-1   ', color.gray, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+plot(showStd_D ? s2up_D : na, title='VWAP Day - STDEV +2', color=color.new(color.red, 50), style=plot.style_circles, linewidth=1)
+f_drawLabel(ll_offset, showD_label and showStd_D and not showStd_S ? s2up_D : na, '     --- vD SD+2   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+f_drawLabel(ll_offset, showD_label and showStd_D and showStd_S and not timeIsAllowed_Asia_full ? s2up_D : na, '     --- vD SD+2   ', color.red, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+
+plot(showStd_D ? s2dn_D : na, title='VWAP Day - STDEV -2', color=color.new(color.blue, 50), style=plot.style_circles, linewidth=1)
+f_drawLabel(ll_offset, showD_label and showStd_D and not showStd_S ? s2dn_D : na, '     --- vD SD-2   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+f_drawLabel(ll_offset, showD_label and showStd_D and showStd_S and not timeIsAllowed_Asia_full ? s2dn_D : na, '     --- vD SD-2   ', color.blue, DEFAULT_LABEL_STYLE, DEFAULT_LABEL_SIZE)
+```
+
+# NO-TRADE-ZONES ( For stocks )
+
+!Untitled
+
+```python
+
+/// NO-TRADE-ZONES SCRIPT
+study(title="No-Trade-Zone",shorttitle="No-Trade-Zone", overlay=true)
+timeinrange(res, sess) => time(res, sess) != 0
+
+// **** Checkboxes and custom Session
+iKZNY = input(true, title="Pre Market + First 30min - NYC")
+KZNY = input('0930-1000', type=session, title="NYC-PANIC-ZONE")
+
+iKZNY_LUNCH = input(true, title="Lunch Break - NYC")
+KZNY_LUNCH = input('1230-1400', type=session, title="NYC-LUNCH-BREAK")
+
+iKZNY_DANGER_POST_MARKET = input(true, title="Sell before market closes - NYC")
+KZNY_DANGER_POST_MARKET = input('1540-1600', type=session, title="NYC-SELL-BEFORE MARKET CLOSES")
+
+// **** Logic
+sessToUse = iKZNY == 1 ? KZNY : '0000-0000'
+sessToUse_LUNCH = iKZNY_LUNCH == 1 ? KZNY_LUNCH : '0000-0000'
+sessToUse_DANGER_POST_MARKET = iKZNY_DANGER_POST_MARKET == 1 ? KZNY_DANGER_POST_MARKET : '0000-0000'
+
+// *** Apply custom rules
+bgPlot = (iKZNY == 0 ? time(period) : time(period, sessToUse)) 
+bgPlot1 = (iKZNY_LUNCH == 0 ? time(period) : time(period, sessToUse_LUNCH)) 
+bgPlot2 = (iKZNY_DANGER_POST_MARKET == 0 ? time(period) : time(period, sessToUse_DANGER_POST_MARKET)) 
+
+//**** Plot as background
+bgcolor(iKZNY and bgPlot > 0 ? red : na, transp=80) 
+bgcolor(iKZNY_LUNCH and bgPlot1 > 0 ? red : na, transp=80) 
+bgcolor(iKZNY_DANGER_POST_MARKET and bgPlot2 > 0 ? red : na, transp=80)
+```
+
+# Volume in dollar per candle
+
+!Untitled
+
+```protobuf
+//@version=4
+study("Dollar Volume", shorttitle="QV_DOLLAR",format=format.volume, precision=0)
+lengthMA=input(30)
+buy_threshold_in_dollar = input(100000) //$100K Per candle 
+optimal_buy_threshold =  input(1000000) //$1m per candle 
+tdv = hlc3 * volume
+
+barcolor = if close < open
+    color.gray
+else
+    color.blue
+
+plot(tdv, color=barcolor, linewidth=10, style=plot.style_histogram, title = 'qv_dollar')
+plot(sma(tdv, lengthMA), color=color.yellow, title='qv_ma')
+
+/// var prStdevMult3 = input(defval = 3.0, title="3d", inline = "prStDev", step = .05, group = "VWAP Periods & Type by chart timeframe")
+plot(buy_threshold_in_dollar, color=color.white, title='minimum_buy_threshold', linewidth = 3)
+plot(optimal_buy_threshold, color=color.blue, title='optimal_buy_threshold', linewidth = 5)
+```
+
+# Total Volume in dollar since session started
+
+!Untitled
+
+!Untitled
+
+```protobuf
+//@version=5
+indicator("Session Volume Accumlated $", shorttitle="Session Volume Accumlated $",format=format.volume, precision=0)
+
+// ---------- Functions ---------- //
+
+computeSessionVolume(isNewPeriod) =>
+	var float sumVol = na
+	sumVol := isNewPeriod ? hlc3 * volume : hlc3 * volume + sumVol[1]
+    sumVol
+
+timeChange(period) =>
+	ta.change(time(period))
+
+newSessionD = timeChange("D")
+session_volume = computeSessionVolume(newSessionD)
+
+// Session Volume Accumalted 
+plot(session_volume, title='Session Volume Accumulated $', color=color.new(color.gray, 0), style=plot.style_columns, linewidth=1)
+
+buy_threshold_in_dollar = input(10000000) //10M$
+optimal_buy_threshold =  input(50000000) // 50M$
+plot(buy_threshold_in_dollar, color=color.white, title='minimum_buy_threshold', linewidth = 3) 
+plot(optimal_buy_threshold, color=color.blue, title='optimal_buy_threshold', linewidth = 5)
+```
+
+## Relative QV Dollar (R/QVOL)
+
+!Untitled
+
+```python
+//@version=4
+study("Relative QV Dollar (R/QVOL)",format=format.volume, precision=2)
+volumeLength5days = 1800 //5 days / based on 1min
+tdv = sma(hlc3 * volume, 30)
+averageVolume_5days = sma(tdv, volumeLength5days)
+relativeVolume_5Days = tdv / averageVolume_5days
+plot(relativeVolume_5Days, 'Relative QV Dollar (R/QVOL)-5 Days')
+buy_threshold_minimum = input(5)
+plot(buy_threshold_minimum, color=color.white, title='minimum_buy_threshold', linewidth = 2)
+```
