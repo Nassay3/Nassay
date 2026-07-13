@@ -122,11 +122,13 @@ export interface VwapSession {
 export type VwapResponseDailyVwap = {
   current: VwapLine;
   previous: VwapLine;
+  bands: VwapBand[];
 };
 
 export type VwapResponseWeeklyVwap = {
   current: VwapLine;
   previous: VwapLine;
+  bands: VwapBand[];
 };
 
 export type VwapResponseDollarVolume = {

@@ -115,7 +115,20 @@ export const GetVwapResponse = zod.object({
   "time": zod.number(),
   "value": zod.number().nullable()
 }))
-})
+}),
+  "bands": zod.array(zod.object({
+  "name": zod.string(),
+  "upperColor": zod.string(),
+  "lowerColor": zod.string(),
+  "upper": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+})),
+  "lower": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+}))
+}))
 }),
   "weeklyVwap": zod.object({
   "current": zod.object({
@@ -133,7 +146,20 @@ export const GetVwapResponse = zod.object({
   "time": zod.number(),
   "value": zod.number().nullable()
 }))
-})
+}),
+  "bands": zod.array(zod.object({
+  "name": zod.string(),
+  "upperColor": zod.string(),
+  "lowerColor": zod.string(),
+  "upper": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+})),
+  "lower": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+}))
+}))
 }),
   "sessions": zod.array(zod.object({
   "name": zod.string(),

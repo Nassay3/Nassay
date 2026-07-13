@@ -5,9 +5,11 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { VwapBand } from './vwapBand';
 import type { VwapLine } from './vwapLine';
 
 export type VwapResponseDailyVwap = {
   current: VwapLine;
   previous: VwapLine;
+  bands: VwapBand[];
 };

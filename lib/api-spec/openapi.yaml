@@ -340,20 +340,28 @@ components:
             $ref: "#/components/schemas/VwapLine"
         dailyVwap:
           type: object
-          required: [current, previous]
+          required: [current, previous, bands]
           properties:
             current:
               $ref: "#/components/schemas/VwapLine"
             previous:
               $ref: "#/components/schemas/VwapLine"
+            bands:
+              type: array
+              items:
+                $ref: "#/components/schemas/VwapBand"
         weeklyVwap:
           type: object
-          required: [current, previous]
+          required: [current, previous, bands]
           properties:
             current:
               $ref: "#/components/schemas/VwapLine"
             previous:
               $ref: "#/components/schemas/VwapLine"
+            bands:
+              type: array
+              items:
+                $ref: "#/components/schemas/VwapBand"
         sessions:
           type: array
           items:

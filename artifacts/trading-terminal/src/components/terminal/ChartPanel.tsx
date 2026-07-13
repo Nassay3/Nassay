@@ -10,50 +10,33 @@ import {
 import { useGetHistory, useGetVwap, getGetHistoryQueryKey, getGetVwapQueryKey } from '@workspace/api-client-react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { wsManager } from '@/lib/ws';
-import {
-  Eye, EyeOff, Settings2, ChevronDown, ChevronRight, GripVertical,
-} from 'lucide-react';
+import { Eye, EyeOff, Settings2, ChevronDown, ChevronRight, GripVertical, PanelLeft } from 'lucide-react';
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface IndicatorGroup {
-  label: string;
-  keys: string[];
-  settingKey?: string; // single key that controls group-level show/hide
-  dynamicPrefix?: string; // prefix for dynamically-named lines (vwapUltra1 / vwmaMtfMap)
-}
-
-const INDICATOR_GROUPS: IndicatorGroup[] = [
-  { label: 'Multi VWAP',   keys: ['VWAP 21','VWAP 48','VWAP 84','VWAP 175','VWAP 480','VWAP 840'] },
-  { label: 'Daily',        keys: ['Daily VWAP','Prev Daily VWAP'] },
-  { label: 'Weekly',       keys: ['Weekly VWAP','Prev Weekly VWAP'] },
-  { label: 'Sessions',     keys: ['Session Asia','Session London','Session NY','Session Daily'] },
-  { label: 'VWMA Auto',    keys: [],  settingKey: 'VWMA Auto',  dynamicPrefix: 'VWMA' },
-  { label: 'VWMA MTF Map', keys: [],  settingKey: 'VWMA MTF',   dynamicPrefix: 'VWMA MTF' },
-  { label: 'Sub-Panes',    keys: ['Dollar Volume','Session Volume','Relative QV','ZScore'] },
-];
-
-// ── Chart helpers ─────────────────────────────────────────────────────────────
+// ── Series helpers ────────────────────────────────────────────────────────────
 
 function makeLine(
   chart: IChartApi,
   color: string,
-  lineWidth: 1|2|3 = 1,
-  lineStyle: 0|1|2|3 = 0,
+  lineWidth: 1 | 2 | 3 = 1,
+  lineStyle: 0 | 1 | 2 | 3 = 0,
   visible = true,
 ): ISeriesApi<'Line'> {
   return chart.addSeries(LineSeries, {
-    color, lineWidth, lineStyle, visible,
+    color,
+    lineWidth,
+    lineStyle,
+    visible,
     crosshairMarkerVisible: false,
     lastValueVisible: true,
     priceLineVisible: false,
   });
 }
 
-function setLineData(series: ISeriesApi<'Line'>, pts: {time: number; value: number|null}[]) {
+function setLineData(series: ISeriesApi<'Line'>, pts: { time: number; value: number | null }[]) {
   series.setData(
-    pts.filter(p => p.value !== null)
-       .map(p => ({ time: (p.time / 1000) as Time, value: p.value! })),
+    pts
+      .filter(p => p.value !== null && Number.isFinite(p.value))
+      .map(p => ({ time: (p.time / 1000) as Time, value: p.value! })),
   );
 }
 
@@ -69,27 +52,93 @@ function subChartBase(container: HTMLDivElement) {
   });
 }
 
+// ── Sidebar group definitions ─────────────────────────────────────────────────
+
+interface IndicatorRow {
+  key: string;
+  label?: string;
+  isBand?: boolean;
+  dynamicPrefix?: string;
+}
+interface IndicatorGroup {
+  label: string;
+  rows: IndicatorRow[];
+  settingKey?: string;
+}
+
+const INDICATOR_GROUPS: IndicatorGroup[] = [
+  {
+    label: 'Multi VWAP', rows: [
+      { key: 'VWAP 21' }, { key: 'VWAP 48' }, { key: 'VWAP 84' },
+      { key: 'VWAP 175' }, { key: 'VWAP 480' }, { key: 'VWAP 840' },
+    ],
+  },
+  {
+    label: 'Daily', rows: [
+      { key: 'Daily VWAP' }, { key: 'Prev Daily VWAP' },
+      { key: 'Daily VWAP Bands', label: '± Bands', isBand: true },
+    ],
+  },
+  {
+    label: 'Weekly', rows: [
+      { key: 'Weekly VWAP' }, { key: 'Prev Weekly VWAP' },
+      { key: 'Weekly VWAP Bands', label: '± Bands', isBand: true },
+    ],
+  },
+  {
+    label: 'Sessions', rows: [
+      { key: 'Session Asia' },   { key: 'Session Asia Bands',   label: 'Asia ± Bands',   isBand: true },
+      { key: 'Session London' }, { key: 'Session London Bands', label: 'London ± Bands', isBand: true },
+      { key: 'Session NY' },     { key: 'Session NY Bands',     label: 'NY ± Bands',     isBand: true },
+      { key: 'Session Daily' },  { key: 'Session Daily Bands',  label: 'Daily ± Bands',  isBand: true },
+    ],
+  },
+  {
+    label: 'VWMA Auto', settingKey: 'VWMA Auto', rows: [
+      { key: '__vwma__', dynamicPrefix: 'VWMA' },
+    ],
+  },
+  {
+    label: 'VWMA MTF Map', settingKey: 'VWMA MTF', rows: [
+      { key: '__mtf__', dynamicPrefix: 'VWMA MTF' },
+    ],
+  },
+  {
+    label: 'Sub-Panes', rows: [
+      { key: 'Dollar Volume' }, { key: 'Session Volume' },
+      { key: 'Relative QV' },  { key: 'ZScore' },
+    ],
+  },
+];
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ChartPanel() {
-  const { activeSymbol, interval, setInterval, indicatorSettings, toggleIndicator, paneOrder, setPaneOrder } = useTradingStore();
+  const {
+    activeSymbol, interval, setInterval,
+    indicatorSettings, toggleIndicator,
+    paneOrder, setPaneOrder,
+    sidebarOpen, setSidebarOpen,
+  } = useTradingStore();
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef          = useRef<IChartApi | null>(null);
-  const seriesRefs        = useRef({
+
+  const seriesRefs = useRef({
     candle:    null as ISeriesApi<'Candlestick'> | null,
     volume:    null as ISeriesApi<'Histogram'>   | null,
-    vwapLines: new Map<string, ISeriesApi<'Line'>>(),
-    vwapBands: new Map<string, ISeriesApi<'Line'>[]>(),
+    lines:     new Map<string, ISeriesApi<'Line'>>(),   // key → main line
+    bandLines: new Map<string, ISeriesApi<'Line'>[]>(), // bandKey → [upper,lower] × nBands
   });
   const seriesNameMap = useRef(new Map<ISeriesApi<any>, string>());
-  const [hoveredValues, setHoveredValues]     = useState<Record<string, number>>({});
-  const [expandedGroups, setExpandedGroups]   = useState<Record<string, boolean>>({});
-  const [selectedKey, setSelectedKey]         = useState<string | null>(null);
-  const [dynamicKeys, setDynamicKeys]         = useState<{ vwma: string[]; mtf: string[] }>({ vwma: [], mtf: [] });
+
+  const [hoveredValues, setHoveredValues]   = useState<Record<string, number>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [selectedKey, setSelectedKey]       = useState<string | null>(null);
+  const [dynamicKeys, setDynamicKeys]       = useState<{ vwma: string[]; mtf: string[] }>({ vwma: [], mtf: [] });
   const dragPane = useRef<SubPane | null>(null);
 
-  // --- Fetch historical klines and VWAP
+  // Fetch data
   const klinesParams = { symbol: activeSymbol, interval } as any;
   const { data: klinesData } = useGetHistory(
     klinesParams,
@@ -101,7 +150,7 @@ export default function ChartPanel() {
     { query: { queryKey: getGetVwapQueryKey(vwapParams), refetchOnWindowFocus: false, staleTime: 60000 } },
   );
 
-  // ── 1. Init main chart ──────────────────────────────────────────────────────
+  // ── Init main chart ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
     const chart = createChart(chartContainerRef.current, {
@@ -150,13 +199,13 @@ export default function ChartPanel() {
       chartRef.current = null;
       seriesRefs.current.candle = null;
       seriesRefs.current.volume = null;
-      seriesRefs.current.vwapLines.clear();
-      seriesRefs.current.vwapBands.clear();
+      seriesRefs.current.lines.clear();
+      seriesRefs.current.bandLines.clear();
       seriesNameMap.current.clear();
     };
   }, []);
 
-  // ── 2. Load candle data ─────────────────────────────────────────────────────
+  // ── Load candles ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!klinesData || !seriesRefs.current.candle) return;
     seriesRefs.current.candle.setData(
@@ -169,89 +218,104 @@ export default function ChartPanel() {
     seriesRefs.current.volume?.setData(
       klinesData.candles.map(k => ({
         time: (k.openTime / 1000) as Time, value: parseFloat(k.volume),
-        color: parseFloat(k.close) >= parseFloat(k.open)
-          ? 'rgba(14,203,129,0.35)' : 'rgba(246,70,93,0.35)',
+        color: parseFloat(k.close) >= parseFloat(k.open) ? 'rgba(14,203,129,0.35)' : 'rgba(246,70,93,0.35)',
       })),
     );
   }, [klinesData]);
 
-  // ── 3. Load VWAP data ───────────────────────────────────────────────────────
+  // ── Load VWAP indicators ───────────────────────────────────────────────────
   useEffect(() => {
     if (!chartRef.current || !vwapData) return;
     const chart = chartRef.current;
-    const { vwapLines, vwapBands } = seriesRefs.current;
+    const { lines, bandLines } = seriesRefs.current;
 
-    const syncLine = (key: string, data: { color: string; values: {time:number;value:number|null}[] } | null | undefined, forcedSetting?: { color?: string; lineWidth?: 1|2|3; lineStyle?: 0|1|2|3 }) => {
+    /** Upsert a single line series and fill its data */
+    const syncLine = (
+      key: string,
+      data: { color: string; values: { time: number; value: number | null }[] } | null | undefined,
+      overrides?: { lineWidth?: 1|2|3; lineStyle?: 0|1|2|3 },
+    ) => {
       if (!data?.values) return;
       const setting    = indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
       const tfVisible  = isVisibleForInterval(key, interval as Interval);
-      const userVisible = setting?.visible ?? true;
-      const visible    = userVisible && tfVisible;
+      const visible    = (setting?.visible ?? true) && tfVisible;
 
-      let series = vwapLines.get(key);
+      let series = lines.get(key);
       if (!series) {
         series = makeLine(
           chart,
-          forcedSetting?.color ?? setting?.color ?? data.color,
-          forcedSetting?.lineWidth ?? setting?.lineWidth ?? 1,
-          forcedSetting?.lineStyle ?? setting?.lineStyle ?? 0,
+          setting?.color ?? data.color,
+          overrides?.lineWidth ?? setting?.lineWidth ?? 1,
+          overrides?.lineStyle ?? setting?.lineStyle ?? 0,
           visible,
         );
-        vwapLines.set(key, series);
+        lines.set(key, series);
         seriesNameMap.current.set(series, key);
+      } else {
+        series.applyOptions({ visible, color: setting?.color ?? data.color });
       }
-      series.applyOptions({ visible });
       setLineData(series, data.values);
+    };
+
+    /** Upsert band lines (upper + lower) for a given bandKey */
+    const syncBands = (
+      bandKey: string,            // e.g. "Daily VWAP Bands", "Session Asia Bands"
+      rawBands: { upper: { time: number; value: number | null }[]; lower: { time: number; value: number | null }[]; upperColor: string; lowerColor: string }[],
+      parentKey: string,          // e.g. "Daily VWAP" — for TF visibility
+    ) => {
+      // Remove old band series for this key
+      const old = bandLines.get(bandKey);
+      old?.forEach(s => { try { chart.removeSeries(s); } catch {} });
+      bandLines.delete(bandKey);
+
+      const setting  = indicatorSettings[bandKey] ?? DEFAULT_INDICATOR_SETTINGS[bandKey];
+      const tfOk     = isVisibleForInterval(parentKey, interval as Interval);
+      const visible  = (setting?.visible ?? false) && tfOk;
+      if (!rawBands.length) return;
+
+      const newSeries: ISeriesApi<'Line'>[] = [];
+      for (const band of rawBands) {
+        const uColor = setting?.color ?? band.upperColor;
+        const lColor = setting?.color ?? band.lowerColor;
+        const uStyle = setting?.lineStyle ?? 2;
+        const u = makeLine(chart, uColor, 1, uStyle, visible);
+        const l = makeLine(chart, lColor, 1, uStyle, visible);
+        setLineData(u, band.upper);
+        setLineData(l, band.lower);
+        newSeries.push(u, l);
+      }
+      bandLines.set(bandKey, newSeries);
     };
 
     // Multi VWAP
     vwapData.multiPeriodVwaps.forEach(v => syncLine(v.name, v));
 
-    // Daily (timeframe-filtered)
+    // Daily VWAP
     syncLine('Daily VWAP',      vwapData.dailyVwap.current,  { lineWidth: 2 });
     syncLine('Prev Daily VWAP', vwapData.dailyVwap.previous, { lineStyle: 1 });
+    syncBands('Daily VWAP Bands', vwapData.dailyVwap.bands, 'Daily VWAP');
 
-    // Weekly (timeframe-filtered)
+    // Weekly VWAP
     syncLine('Weekly VWAP',      vwapData.weeklyVwap.current,  { lineWidth: 2 });
     syncLine('Prev Weekly VWAP', vwapData.weeklyVwap.previous, { lineStyle: 1 });
+    syncBands('Weekly VWAP Bands', vwapData.weeklyVwap.bands, 'Weekly VWAP');
 
-    // Sessions — ONLY Daily session gets bands; Asia/London/NY → lines only
+    // Sessions
     vwapData.sessions.forEach(session => {
-      const key = session.vwap.name; // e.g. "Session Asia", "Session Daily"
-      syncLine(key, session.vwap, { lineWidth: 2 });
-
-      // Remove old bands for this session
-      const old = vwapBands.get(key);
-      old?.forEach(b => chart.removeSeries(b));
-
-      const sessUserVisible = (indicatorSettings[key]?.visible ?? true) && isVisibleForInterval(key, interval as Interval);
-
-      // Only Daily session shows bands
-      if (key === 'Session Daily' && session.bands.length) {
-        const newBands: ISeriesApi<'Line'>[] = [];
-        session.bands.forEach(band => {
-          const mk = (pts: {time:number;value:number|null}[], color: string) => {
-            const s = makeLine(chart, color, 1, 2, sessUserVisible);
-            setLineData(s, pts);
-            newBands.push(s);
-          };
-          mk(band.upper, band.upperColor);
-          mk(band.lower, band.lowerColor);
-        });
-        vwapBands.set(key, newBands);
-      } else {
-        vwapBands.delete(key);
-      }
+      const lineKey = session.vwap.name;   // e.g. "Session Asia"
+      const bandKey = lineKey + ' Bands';  // e.g. "Session Asia Bands"
+      syncLine(lineKey, session.vwap, { lineWidth: 2 });
+      syncBands(bandKey, session.bands, lineKey);
     });
 
-    // VWMA Auto (vwapUltra1)
+    // VWMA Auto
     const vwmaKeys: string[] = [];
     (vwapData.vwapUltra1 ?? []).forEach(line => {
       syncLine(line.name, line, { lineWidth: indicatorSettings['VWMA Auto']?.lineWidth ?? 1 });
       vwmaKeys.push(line.name);
     });
 
-    // VWMA MTF Map (vwmaMtfMap)
+    // VWMA MTF
     const mtfKeys: string[] = [];
     (vwapData.vwmaMtfMap ?? []).forEach(line => {
       syncLine(line.name, line, { lineWidth: indicatorSettings['VWMA MTF']?.lineWidth ?? 1 });
@@ -262,36 +326,39 @@ export default function ChartPanel() {
 
   }, [vwapData, interval]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 4. Apply settings changes ───────────────────────────────────────────────
+  // ── Apply settings changes ───────────────────────────────────────────────────
   useEffect(() => {
-    const { vwapLines, vwapBands } = seriesRefs.current;
-    vwapLines.forEach((series, key) => {
-      const setting   = indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
-      const tfVisible = isVisibleForInterval(key, interval as Interval);
+    const { lines, bandLines } = seriesRefs.current;
 
-      // Dynamic lines use group setting
+    lines.forEach((series, key) => {
+      // Resolve group key for dynamic VWMA lines
       let groupKey = key;
-      if (key.startsWith('VWMA ') && !key.includes('[')) groupKey = 'VWMA Auto';
-      if (key.includes('['))                               groupKey = 'VWMA MTF';
+      if (!indicatorSettings[key] && (key.startsWith('VWMA ') && !key.includes('['))) groupKey = 'VWMA Auto';
+      if (!indicatorSettings[key] && key.includes('['))                                 groupKey = 'VWMA MTF';
 
-      const gs = indicatorSettings[groupKey];
-      const visible = (gs?.visible ?? setting?.visible ?? true) && tfVisible;
+      const setting  = indicatorSettings[groupKey] ?? indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
+      const tfVisible = isVisibleForInterval(key, interval as Interval);
+      const visible  = (setting?.visible ?? true) && tfVisible;
+
       series.applyOptions({
         visible,
-        color:     gs?.color ?? setting?.color ?? '#ffffff',
-        lineWidth: gs?.lineWidth ?? setting?.lineWidth ?? 1,
-        lineStyle: gs?.lineStyle ?? setting?.lineStyle ?? 0,
+        color:     setting?.color     ?? '#ffffff',
+        lineWidth: setting?.lineWidth ?? 1,
+        lineStyle: setting?.lineStyle ?? 0,
       });
     });
-    vwapBands.forEach((bands, key) => {
-      const setting   = indicatorSettings[key];
-      const tfVisible = isVisibleForInterval(key, interval as Interval);
-      const visible   = (setting?.visible ?? true) && tfVisible;
-      bands.forEach(b => b.applyOptions({ visible }));
+
+    bandLines.forEach((bands, bandKey) => {
+      // parentKey is the band key without " Bands" suffix
+      const parentKey = bandKey.replace(' Bands', '');
+      const setting   = indicatorSettings[bandKey] ?? DEFAULT_INDICATOR_SETTINGS[bandKey];
+      const tfOk      = isVisibleForInterval(parentKey, interval as Interval);
+      const visible   = (setting?.visible ?? false) && tfOk;
+      bands.forEach(b => b.applyOptions({ visible, lineStyle: setting?.lineStyle ?? 2 }));
     });
   }, [indicatorSettings, interval]);
 
-  // ── 5. Live WebSocket ───────────────────────────────────────────────────────
+  // ── WebSocket live feed ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!seriesRefs.current.candle) return;
     const unsub = wsManager.onMessage((msg) => {
@@ -311,7 +378,7 @@ export default function ChartPanel() {
     return () => { unsub(); };
   }, [activeSymbol]);
 
-  // ── Drag-to-reorder sub-panes ───────────────────────────────────────────────
+  // ── Drag-to-reorder sub-panes ─────────────────────────────────────────────
   const handleDragStart = useCallback((pane: SubPane) => { dragPane.current = pane; }, []);
   const handleDragOver  = useCallback((e: React.DragEvent, target: SubPane) => {
     e.preventDefault();
@@ -324,9 +391,6 @@ export default function ChartPanel() {
     setPaneOrder(newOrder);
   }, [paneOrder, setPaneOrder]);
 
-  const mainChart = chartRef.current;
-
-  // Pane visibility
   const paneVisible: Record<SubPane, boolean> = {
     'Dollar Volume':  indicatorSettings['Dollar Volume']?.visible  ?? true,
     'Session Volume': indicatorSettings['Session Volume']?.visible ?? true,
@@ -334,10 +398,21 @@ export default function ChartPanel() {
     'ZScore':         indicatorSettings['ZScore']?.visible         ?? true,
   };
 
+  const mainChart = chartRef.current;
+
   return (
     <div className="flex flex-col h-full w-full bg-[#000000] text-[#d1d4dc] overflow-hidden">
-      {/* ── Interval selector ──────────────────────────────────────────────── */}
+      {/* Interval toolbar */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[#1a1a1a] bg-[#000000] shrink-0">
+        {/* Sidebar toggle */}
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          title="Toggle indicator panel"
+          className={`p-1 rounded transition-colors ${sidebarOpen ? 'text-[#2962ff]' : 'text-[#666] hover:text-[#aaa]'}`}
+        >
+          <PanelLeft size={16} />
+        </button>
+
         <ToggleGroup type="single" value={interval} onValueChange={v => v && setInterval(v as Interval)} size="sm">
           {(Object.keys(INTERVAL_LABELS) as Interval[]).map(i => (
             <ToggleGroupItem
@@ -351,23 +426,25 @@ export default function ChartPanel() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ── Indicator sidebar ──────────────────────────────────────────────── */}
-        <IndicatorSidebar
-          groups={INDICATOR_GROUPS}
-          dynamicKeys={dynamicKeys}
-          hoveredValues={hoveredValues}
-          expandedGroups={expandedGroups}
-          setExpandedGroups={setExpandedGroups}
-          selectedKey={selectedKey}
-          setSelectedKey={setSelectedKey}
-          paneOrder={paneOrder}
-          paneVisible={paneVisible}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDrop={() => { dragPane.current = null; }}
-        />
+        {/* Indicator sidebar */}
+        {sidebarOpen && (
+          <IndicatorSidebar
+            groups={INDICATOR_GROUPS}
+            dynamicKeys={dynamicKeys}
+            hoveredValues={hoveredValues}
+            expandedGroups={expandedGroups}
+            setExpandedGroups={setExpandedGroups}
+            selectedKey={selectedKey}
+            setSelectedKey={setSelectedKey}
+            paneOrder={paneOrder}
+            paneVisible={paneVisible}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={() => { dragPane.current = null; }}
+          />
+        )}
 
-        {/* ── Charts column ──────────────────────────────────────────────────── */}
+        {/* Charts column */}
         <div className="flex-1 flex flex-col min-w-0">
           <div ref={chartContainerRef} className="flex-1 min-h-[180px]" />
 
@@ -376,27 +453,23 @@ export default function ChartPanel() {
             if (!paneVisible[pane] || !vwapData) return null;
             return (
               <DraggablePane
-                key={pane}
-                label={pane}
+                key={pane} label={pane}
                 onDragStart={() => handleDragStart(pane)}
                 onDragOver={e => handleDragOver(e, pane)}
                 onDrop={() => { dragPane.current = null; }}
               >
-                {pane === 'Dollar Volume'  && <DollarVolumeChart  data={vwapData.dollarVolume}           mainChart={mainChart} />}
+                {pane === 'Dollar Volume'  && <DollarVolumeChart  data={vwapData.dollarVolume}            mainChart={mainChart} />}
                 {pane === 'Session Volume' && <SessionVolumeChart data={vwapData.sessionVolumeAccumulated} mainChart={mainChart} />}
-                {pane === 'Relative QV'   && <RelativeQvChart    data={vwapData.relativeQv}              mainChart={mainChart} />}
-                {pane === 'ZScore'        && <ZScoreChart        data={vwapData.zScore ?? []}            mainChart={mainChart} />}
+                {pane === 'Relative QV'   && <RelativeQvChart    data={vwapData.relativeQv}               mainChart={mainChart} />}
+                {pane === 'ZScore'        && <ZScoreChart        data={vwapData.zScore ?? []}             mainChart={mainChart} />}
               </DraggablePane>
             );
           })}
         </div>
 
-        {/* ── Settings panel (slides in from right) ─────────────────────────── */}
+        {/* Settings panel */}
         {selectedKey && (
-          <SettingsPanel
-            name={selectedKey}
-            onClose={() => setSelectedKey(null)}
-          />
+          <SettingsPanel name={selectedKey} onClose={() => setSelectedKey(null)} />
         )}
       </div>
     </div>
@@ -422,53 +495,40 @@ function IndicatorSidebar({
   onDragOver: (e: React.DragEvent, p: SubPane) => void;
   onDrop: () => void;
 }) {
-  const { indicatorSettings, toggleIndicator } = useTradingStore();
-  const { interval } = useTradingStore();
-
+  const { indicatorSettings, toggleIndicator, interval } = useTradingStore();
   const toggleGroup = (label: string) =>
     setExpandedGroups(prev => ({ ...prev, [label]: !prev[label] }));
 
   return (
-    <div className="w-[195px] shrink-0 border-r border-[#1a1a1a] bg-[#080808] flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto no-scrollbar">
+    <div className="w-[190px] shrink-0 border-r border-[#1a1a1a] bg-[#080808] flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
         {groups.map(group => {
           const isExpanded = expandedGroups[group.label] ?? true;
 
-          // Resolve keys for dynamic groups
-          let keys = [...group.keys];
-          if (group.dynamicPrefix === 'VWMA') keys = dynamicKeys.vwma;
-          if (group.dynamicPrefix === 'VWMA MTF') keys = dynamicKeys.mtf;
-
-          // Sub-Panes group: render draggable rows
+          // Sub-Panes — draggable
           if (group.label === 'Sub-Panes') {
             return (
-              <div key={group.label} className="border-b border-[#111] mb-1">
-                <GroupHeader label={group.label} isExpanded={isExpanded} onToggle={() => toggleGroup(group.label)} />
+              <div key="Sub-Panes" className="border-b border-[#111] pb-1">
+                <GroupHeader label="Sub-Panes" isExpanded={isExpanded} onToggle={() => toggleGroup('Sub-Panes')} />
                 {isExpanded && paneOrder.map(pane => {
-                  const setting = indicatorSettings[pane];
+                  const setting = indicatorSettings[pane] ?? DEFAULT_INDICATOR_SETTINGS[pane];
                   const vis = paneVisible[pane];
                   return (
                     <div
-                      key={pane}
-                      draggable
+                      key={pane} draggable
                       onDragStart={() => onDragStart(pane)}
                       onDragOver={e => onDragOver(e, pane)}
                       onDrop={onDrop}
-                      className="flex items-center justify-between px-2 py-1 hover:bg-[#111] group cursor-grab active:cursor-grabbing"
+                      className="flex items-center justify-between px-2 py-1 hover:bg-[#111] cursor-grab active:cursor-grabbing"
                     >
-                      <div className="flex items-center gap-1.5 overflow-hidden">
+                      <div className="flex items-center gap-1.5 overflow-hidden min-w-0">
                         <GripVertical size={10} className="text-[#333] shrink-0" />
                         <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: setting?.color ?? '#fff', opacity: vis ? 1 : 0.3 }} />
                         <span className={`text-[10px] truncate ${vis ? 'text-[#ccc]' : 'text-[#444]'}`}>{pane}</span>
                       </div>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
-                        <button
-                          onClick={e => { e.stopPropagation(); toggleIndicator(pane); }}
-                          className="text-[#666] hover:text-white p-0.5 rounded"
-                        >
-                          {vis ? <Eye size={11} /> : <EyeOff size={11} />}
-                        </button>
-                        <button onClick={e => { e.stopPropagation(); setSelectedKey(pane); }} className="text-[#666] hover:text-white p-0.5 rounded">
+                      <div className="flex items-center gap-0.5 shrink-0 ml-1">
+                        <EyeToggle settingKey={pane} visible={vis} onToggle={() => toggleIndicator(pane)} />
+                        <button onClick={() => setSelectedKey(pane)} className="text-[#555] hover:text-[#aaa] p-0.5 rounded">
                           <Settings2 size={11} />
                         </button>
                       </div>
@@ -479,70 +539,53 @@ function IndicatorSidebar({
             );
           }
 
-          // Group-level visibility key
-          const groupSettingKey = group.settingKey;
+          // Dynamic groups (VWMA Auto, VWMA MTF)
+          if (group.rows.some(r => r.dynamicPrefix)) {
+            const keys = group.rows[0].dynamicPrefix === 'VWMA' ? dynamicKeys.vwma : dynamicKeys.mtf;
+            return (
+              <div key={group.label} className="border-b border-[#111] pb-1">
+                <GroupHeader label={group.label} isExpanded={isExpanded} onToggle={() => toggleGroup(group.label)} settingKey={group.settingKey} />
+                {isExpanded && keys.map(key => {
+                  const vis = (indicatorSettings[group.settingKey!]?.visible ?? true) && isVisibleForInterval(key, interval as Interval);
+                  return (
+                    <IndicatorRow
+                      key={key} settingKey={key} label={key}
+                      visible={vis}
+                      hovered={hoveredValues[key]}
+                      isTfHidden={!isVisibleForInterval(key, interval as Interval)}
+                      onToggle={() => toggleIndicator(group.settingKey!)}
+                      onSettings={() => setSelectedKey(group.settingKey!)}
+                    />
+                  );
+                })}
+                {isExpanded && keys.length === 0 && (
+                  <div className="px-3 py-1 text-[9px] text-[#333] italic">Loading…</div>
+                )}
+              </div>
+            );
+          }
 
+          // Normal groups
           return (
-            <div key={group.label} className="border-b border-[#111] mb-1">
-              <GroupHeader
-                label={group.label}
-                isExpanded={isExpanded}
-                onToggle={() => toggleGroup(group.label)}
-                settingKey={groupSettingKey}
-              />
-
-              {isExpanded && keys.map(key => {
-                const setting  = indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
-                const tfOk     = isVisibleForInterval(key, interval as Interval);
-                const hovered  = hoveredValues[key];
-                const effectiveVisible = (setting?.visible ?? true);
-
+            <div key={group.label} className="border-b border-[#111] pb-1">
+              <GroupHeader label={group.label} isExpanded={isExpanded} onToggle={() => toggleGroup(group.label)} settingKey={group.settingKey} />
+              {isExpanded && group.rows.map(row => {
+                const setting  = indicatorSettings[row.key] ?? DEFAULT_INDICATOR_SETTINGS[row.key];
+                const tfHidden = !isVisibleForInterval(row.key.replace(' Bands', ''), interval as Interval);
+                const vis      = (setting?.visible ?? true) && !tfHidden;
                 return (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between px-2.5 py-1 hover:bg-[#111] group cursor-pointer"
-                    onClick={() => setSelectedKey(key)}
-                  >
-                    <div className="flex items-center gap-1.5 overflow-hidden min-w-0">
-                      <div
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{
-                          backgroundColor: setting?.color ?? '#888',
-                          opacity: effectiveVisible && tfOk ? 1 : 0.25,
-                        }}
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span className={`text-[10px] truncate leading-tight ${effectiveVisible && tfOk ? 'text-[#ccc]' : 'text-[#444]'}`}>
-                          {key}
-                        </span>
-                        {hovered !== undefined && (
-                          <span className="text-[9px] text-[#888] tabular-nums leading-tight">
-                            {hovered.toFixed(2)}
-                          </span>
-                        )}
-                        {!tfOk && (
-                          <span className="text-[8px] text-[#444] leading-tight">hidden TF</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0 ml-1">
-                      <button
-                        onClick={e => { e.stopPropagation(); toggleIndicator(key); }}
-                        className="text-[#666] hover:text-white p-0.5 rounded"
-                      >
-                        {effectiveVisible ? <Eye size={11} /> : <EyeOff size={11} />}
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); setSelectedKey(key); }} className="text-[#666] hover:text-white p-0.5 rounded">
-                        <Settings2 size={11} />
-                      </button>
-                    </div>
-                  </div>
+                  <IndicatorRow
+                    key={row.key} settingKey={row.key}
+                    label={row.label ?? row.key}
+                    visible={vis}
+                    hovered={hoveredValues[row.key]}
+                    isTfHidden={tfHidden}
+                    isBand={row.isBand}
+                    onToggle={() => toggleIndicator(row.key)}
+                    onSettings={() => setSelectedKey(row.key)}
+                  />
                 );
               })}
-
-              {isExpanded && keys.length === 0 && group.dynamicPrefix && (
-                <div className="px-3 py-1 text-[9px] text-[#333] italic">Loading…</div>
-              )}
             </div>
           );
         })}
@@ -551,97 +594,130 @@ function IndicatorSidebar({
   );
 }
 
+// ── Row atom ──────────────────────────────────────────────────────────────────
+
+function IndicatorRow({
+  settingKey, label, visible, hovered, isTfHidden, isBand, onToggle, onSettings,
+}: {
+  settingKey: string; label: string; visible: boolean; hovered?: number;
+  isTfHidden?: boolean; isBand?: boolean; onToggle: () => void; onSettings: () => void;
+}) {
+  const { indicatorSettings } = useTradingStore();
+  const setting = indicatorSettings[settingKey] ?? DEFAULT_INDICATOR_SETTINGS[settingKey];
+  const color   = setting?.color ?? '#888';
+
+  return (
+    <div
+      className="flex items-center justify-between px-2.5 py-[3px] hover:bg-[#0f0f0f] cursor-pointer"
+      onClick={onSettings}
+    >
+      <div className="flex items-center gap-1.5 overflow-hidden min-w-0">
+        {isBand ? (
+          <div className="w-4 h-[2px] shrink-0 rounded" style={{ backgroundColor: color, opacity: visible ? 0.8 : 0.2, borderTop: `1px dashed ${color}` }} />
+        ) : (
+          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color, opacity: visible ? 1 : 0.25 }} />
+        )}
+        <div className="flex flex-col min-w-0 leading-none">
+          <span className={`text-[10px] truncate ${visible ? 'text-[#ccc]' : 'text-[#444]'}`}>{label}</span>
+          {hovered !== undefined && (
+            <span className="text-[9px] text-[#666] tabular-nums">{hovered.toFixed(2)}</span>
+          )}
+          {isTfHidden && (
+            <span className="text-[8px] text-[#333]">hidden TF</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0 ml-1" onClick={e => e.stopPropagation()}>
+        <EyeToggle settingKey={settingKey} visible={visible} onToggle={onToggle} />
+        <button onClick={onSettings} className="text-[#555] hover:text-[#aaa] p-0.5 rounded">
+          <Settings2 size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Always-visible eye toggle button
+function EyeToggle({ settingKey: _key, visible, onToggle }: { settingKey: string; visible: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onToggle(); }}
+      className={`p-0.5 rounded transition-colors ${visible ? 'text-[#888] hover:text-white' : 'text-[#333] hover:text-[#888]'}`}
+    >
+      {visible ? <Eye size={11} /> : <EyeOff size={11} />}
+    </button>
+  );
+}
+
 function GroupHeader({ label, isExpanded, onToggle, settingKey }: {
   label: string; isExpanded: boolean; onToggle: () => void; settingKey?: string;
 }) {
   const { indicatorSettings, toggleIndicator } = useTradingStore();
   const setting = settingKey ? indicatorSettings[settingKey] : undefined;
-
   return (
-    <div className="flex items-center justify-between px-2.5 py-1.5 hover:bg-[#0f0f0f] cursor-pointer select-none group">
-      <div className="flex items-center gap-1.5" onClick={onToggle}>
-        {isExpanded ? <ChevronDown size={11} className="text-[#555]" /> : <ChevronRight size={11} className="text-[#555]" />}
-        <span className="text-[10px] font-semibold text-[#888] tracking-wide uppercase">{label}</span>
+    <div className="flex items-center justify-between px-2.5 py-1.5 hover:bg-[#0f0f0f] select-none group/gh">
+      <div className="flex items-center gap-1.5 cursor-pointer" onClick={onToggle}>
+        {isExpanded ? <ChevronDown size={11} className="text-[#444]" /> : <ChevronRight size={11} className="text-[#444]" />}
+        <span className="text-[10px] font-semibold text-[#666] tracking-wide uppercase">{label}</span>
       </div>
       {settingKey && (
-        <button
-          onClick={e => { e.stopPropagation(); toggleIndicator(settingKey); }}
-          className="opacity-0 group-hover:opacity-100 text-[#555] hover:text-white p-0.5 rounded transition-opacity"
-        >
-          {setting?.visible !== false ? <Eye size={11} /> : <EyeOff size={11} />}
-        </button>
+        <EyeToggle settingKey={settingKey} visible={setting?.visible !== false} onToggle={() => toggleIndicator(settingKey)} />
       )}
     </div>
   );
 }
 
-// ── Settings Panel ────────────────────────────────────────────────────────────
+// ── Settings panel ─────────────────────────────────────────────────────────────
 
 function SettingsPanel({ name, onClose }: { name: string; onClose: () => void }) {
   const { indicatorSettings, updateIndicator, resetIndicator } = useTradingStore();
   const setting = indicatorSettings[name] ?? DEFAULT_INDICATOR_SETTINGS[name];
-  const [tab, setTab] = useState<'inputs' | 'style' | 'visibility'>('style');
-
+  const [tab, setTab] = useState<'style' | 'visibility'>('style');
   if (!setting) return null;
-
   return (
-    <div className="w-[220px] shrink-0 border-l border-[#1a1a1a] bg-[#0c0c0c] flex flex-col overflow-hidden">
-      {/* Header */}
+    <div className="w-[210px] shrink-0 border-l border-[#1a1a1a] bg-[#0c0c0c] flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-[#1a1a1a] bg-[#101014]">
         <span className="text-[11px] font-bold text-[#d1d4dc] truncate">{name}</span>
-        <button onClick={onClose} className="text-[#555] hover:text-white text-[18px] leading-none ml-2">×</button>
+        <button onClick={onClose} className="text-[#555] hover:text-white text-lg leading-none ml-2">×</button>
       </div>
-
-      {/* Tabs */}
       <div className="flex border-b border-[#1a1a1a]">
         {(['style', 'visibility'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-1.5 text-[10px] font-medium transition-colors capitalize ${tab === t ? 'text-[#2962ff] border-b-2 border-[#2962ff]' : 'text-[#666] hover:text-[#999]'}`}
+          <button key={t} onClick={() => setTab(t)}
+            className={`flex-1 py-1.5 text-[10px] font-medium capitalize transition-colors ${tab === t ? 'text-[#2962ff] border-b-2 border-[#2962ff]' : 'text-[#555] hover:text-[#999]'}`}
           >
             {t}
           </button>
         ))}
       </div>
-
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto no-scrollbar p-3 flex flex-col gap-4 text-[11px]">
+      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4 text-[11px]">
         {tab === 'style' && (
           <>
-            {setting.color !== undefined && (
-              <Row label="Color">
-                <div className="flex items-center gap-2">
-                  <input type="color" value={setting.color}
-                    onChange={e => updateIndicator(name, { color: e.target.value })}
-                    className="w-7 h-7 p-0 border-0 bg-transparent rounded cursor-pointer"
-                  />
-                  <span className="text-[10px] text-[#666] font-mono">{setting.color}</span>
-                </div>
-              </Row>
-            )}
-            {setting.lineWidth !== undefined && (
-              <Row label={`Width: ${setting.lineWidth}px`}>
-                <input type="range" min="1" max="3" value={setting.lineWidth}
-                  onChange={e => updateIndicator(name, { lineWidth: parseInt(e.target.value) as any })}
-                  className="w-full accent-[#2962ff]"
+            <Row label="Color">
+              <div className="flex items-center gap-2">
+                <input type="color" value={setting.color}
+                  onChange={e => updateIndicator(name, { color: e.target.value })}
+                  className="w-7 h-7 p-0 border-0 bg-transparent rounded cursor-pointer"
                 />
-              </Row>
-            )}
-            {setting.lineStyle !== undefined && (
-              <Row label="Style">
-                <select
-                  value={setting.lineStyle}
-                  onChange={e => updateIndicator(name, { lineStyle: parseInt(e.target.value) as any })}
-                  className="w-full bg-[#101014] border border-[#2a2a2a] text-[#d1d4dc] p-1.5 rounded text-[11px] focus:outline-none focus:border-[#2962ff]"
-                >
-                  <option value={0}>Solid</option>
-                  <option value={1}>Dotted</option>
-                  <option value={2}>Dashed</option>
-                  <option value={3}>Large Dashed</option>
-                </select>
-              </Row>
-            )}
+                <span className="text-[10px] text-[#666] font-mono">{setting.color}</span>
+              </div>
+            </Row>
+            <Row label={`Width: ${setting.lineWidth}px`}>
+              <input type="range" min="1" max="3" value={setting.lineWidth}
+                onChange={e => updateIndicator(name, { lineWidth: parseInt(e.target.value) as any })}
+                className="w-full accent-[#2962ff]"
+              />
+            </Row>
+            <Row label="Line style">
+              <select value={setting.lineStyle}
+                onChange={e => updateIndicator(name, { lineStyle: parseInt(e.target.value) as any })}
+                className="w-full bg-[#101014] border border-[#2a2a2a] text-[#d1d4dc] p-1.5 rounded text-[11px] focus:outline-none focus:border-[#2962ff]"
+              >
+                <option value={0}>Solid</option>
+                <option value={1}>Dotted</option>
+                <option value={2}>Dashed</option>
+                <option value={3}>Large Dashed</option>
+              </select>
+            </Row>
           </>
         )}
         {tab === 'visibility' && (
@@ -656,15 +732,9 @@ function SettingsPanel({ name, onClose }: { name: string; onClose: () => void })
           </Row>
         )}
       </div>
-
-      {/* Footer */}
       <div className="flex gap-2 px-3 py-2 border-t border-[#1a1a1a] bg-[#101014]">
-        <button onClick={onClose} className="flex-1 py-1.5 text-[11px] bg-[#2962ff] text-white rounded hover:bg-[#1e4fcf] transition-colors">
-          OK
-        </button>
-        <button onClick={() => { resetIndicator(name); }} className="flex-1 py-1.5 text-[11px] bg-[#1a1a1a] text-[#999] rounded hover:bg-[#222] transition-colors">
-          Reset
-        </button>
+        <button onClick={onClose} className="flex-1 py-1.5 text-[11px] bg-[#2962ff] text-white rounded hover:bg-[#1e4fcf] transition-colors">OK</button>
+        <button onClick={() => resetIndicator(name)} className="flex-1 py-1.5 text-[11px] bg-[#1a1a1a] text-[#999] rounded hover:bg-[#222] transition-colors">Reset</button>
       </div>
     </div>
   );
@@ -682,30 +752,23 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 // ── Draggable Sub-Pane wrapper ────────────────────────────────────────────────
 
 function DraggablePane({ label, children, onDragStart, onDragOver, onDrop }: {
-  label: string;
-  children: React.ReactNode;
-  onDragStart: () => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: () => void;
+  label: string; children: React.ReactNode;
+  onDragStart: () => void; onDragOver: (e: React.DragEvent) => void; onDrop: () => void;
 }) {
   return (
-    <div
-      draggable
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+    <div draggable onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}
       className="h-36 border-t border-[#111] shrink-0 flex flex-col relative bg-[#000000] group/pane"
     >
-      <div className="absolute top-1 left-2 z-10 flex items-center gap-1">
-        <GripVertical size={10} className="text-[#2a2a2a] cursor-grab group-hover/pane:text-[#444]" />
-        <span className="text-[9px] text-[#555] font-bold uppercase tracking-wider">{label}</span>
+      <div className="absolute top-1 left-2 z-10 flex items-center gap-1 pointer-events-none">
+        <GripVertical size={10} className="text-[#2a2a2a] group-hover/pane:text-[#444]" />
+        <span className="text-[9px] text-[#444] font-bold uppercase tracking-wider">{label}</span>
       </div>
       {children}
     </div>
   );
 }
 
-// ── Sub-chart components ──────────────────────────────────────────────────────
+// ── Sub-chart time-sync ───────────────────────────────────────────────────────
 
 function syncTimeScale(child: IChartApi, parent: IChartApi | null): () => void {
   if (!parent) return () => {};
@@ -714,19 +777,24 @@ function syncTimeScale(child: IChartApi, parent: IChartApi | null): () => void {
     try {
       const r = ts.getVisibleRange();
       if (r) child.timeScale().setVisibleRange(r);
-    } catch (_) { /* chart may have been removed */ }
+    } catch {}
   };
   ts.subscribeVisibleTimeRangeChange(sync);
   sync();
-  return () => { try { ts.unsubscribeVisibleTimeRangeChange(sync); } catch (_) {} };
+  return () => { try { ts.unsubscribeVisibleTimeRangeChange(sync); } catch {} };
 }
 
-function useSubChart(containerRef: React.RefObject<HTMLDivElement | null>, mainChart: IChartApi | null, build: (chart: IChartApi) => void, deps: any[]) {
+function useSubChart(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  mainChart: IChartApi | null,
+  build: (chart: IChartApi) => void,
+  deps: any[],
+) {
   useEffect(() => {
     if (!containerRef.current) return;
-    const chart = subChartBase(containerRef.current as HTMLDivElement);
+    const chart      = subChartBase(containerRef.current as HTMLDivElement);
+    const unsubSync  = syncTimeScale(chart, mainChart);
     build(chart);
-    const unsubSync = syncTimeScale(chart, mainChart);
     const onResize = () => {
       if (containerRef.current) {
         chart.applyOptions({ width: containerRef.current.clientWidth, height: containerRef.current.clientHeight });
@@ -737,19 +805,23 @@ function useSubChart(containerRef: React.RefObject<HTMLDivElement | null>, mainC
     return () => {
       window.removeEventListener('resize', onResize);
       unsubSync();
-      try { chart.remove(); } catch (_) {}
+      try { chart.remove(); } catch {}
     };
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
+// ── Sub-chart components ──────────────────────────────────────────────────────
+
 function DollarVolumeChart({ data, mainChart }: { data: any; mainChart: IChartApi | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useSubChart(ref, mainChart, (chart) => {
-    const hist = chart.addSeries(HistogramSeries, { color: '#2196f3', priceLineVisible: false });
-    hist.setData(data.perCandle.values.filter((v: any) => v.value != null).map((v: any) => ({ time: (v.time / 1000) as Time, value: v.value, color: '#2196f3' })));
-    const smaLine = makeLine(chart, '#ffeb3b', 1, 0); setLineData(smaLine, data.sma30.values);
-    const t1 = makeLine(chart, '#555', 1, 2);       setLineData(t1, data.minimumThreshold.values);
-    const t2 = makeLine(chart, '#2196f3', 1, 2);    setLineData(t2, data.optimalThreshold.values);
+    const hist = chart.addSeries(HistogramSeries, { color: '#2196f3', priceLineVisible: false, lastValueVisible: true });
+    hist.setData(data.perCandle.values.filter((v: any) => v.value != null).map((v: any) => ({
+      time: (v.time / 1000) as Time, value: v.value, color: '#2196f3',
+    })));
+    const sma = makeLine(chart, '#ffeb3b', 1, 0); setLineData(sma, data.sma30.values);
+    const t1  = makeLine(chart, '#444',    1, 2);  setLineData(t1,  data.minimumThreshold.values);
+    const t2  = makeLine(chart, '#2196f3', 1, 2);  setLineData(t2,  data.optimalThreshold.values);
   }, [data, mainChart]);
   return <div ref={ref} className="flex-1 pt-4" />;
 }
@@ -757,9 +829,11 @@ function DollarVolumeChart({ data, mainChart }: { data: any; mainChart: IChartAp
 function SessionVolumeChart({ data, mainChart }: { data: any; mainChart: IChartApi | null }) {
   const ref = useRef<HTMLDivElement>(null);
   useSubChart(ref, mainChart, (chart) => {
-    const hist = chart.addSeries(HistogramSeries, { color: '#4caf50', priceLineVisible: false });
-    hist.setData(data.accumulated.values.filter((v: any) => v.value != null).map((v: any) => ({ time: (v.time / 1000) as Time, value: v.value })));
-    const t1 = makeLine(chart, '#555', 1, 2);    setLineData(t1, data.minimumThreshold.values);
+    const hist = chart.addSeries(HistogramSeries, { color: '#4caf50', priceLineVisible: false, lastValueVisible: true });
+    hist.setData(data.accumulated.values.filter((v: any) => v.value != null).map((v: any) => ({
+      time: (v.time / 1000) as Time, value: v.value, color: '#4caf50',
+    })));
+    const t1 = makeLine(chart, '#444',    1, 2); setLineData(t1, data.minimumThreshold.values);
     const t2 = makeLine(chart, '#4caf50', 1, 2); setLineData(t2, data.optimalThreshold.values);
   }, [data, mainChart]);
   return <div ref={ref} className="flex-1 pt-4" />;
@@ -769,7 +843,7 @@ function RelativeQvChart({ data, mainChart }: { data: any; mainChart: IChartApi 
   const ref = useRef<HTMLDivElement>(null);
   useSubChart(ref, mainChart, (chart) => {
     const line = makeLine(chart, '#ff9800', 2); setLineData(line, data.relative.values);
-    const t1   = makeLine(chart, '#555', 1, 2); setLineData(t1, data.minimumThreshold.values);
+    const t1   = makeLine(chart, '#444', 1, 2); setLineData(t1,   data.minimumThreshold.values);
   }, [data, mainChart]);
   return <div ref={ref} className="flex-1 pt-4" />;
 }
@@ -778,16 +852,16 @@ function ZScoreChart({ data, mainChart }: { data: any[]; mainChart: IChartApi | 
   const ref = useRef<HTMLDivElement>(null);
   useSubChart(ref, mainChart, (chart) => {
     data.forEach(line => {
-      const s = makeLine(chart, line.color, 1); setLineData(s, line.values);
+      const s = makeLine(chart, line.color, 1);
+      setLineData(s, line.values);
     });
-    // Zero line
-    const first = data[0]?.values?.[0];
-    const last  = data[0]?.values?.[data[0].values.length - 1];
-    if (first && last) {
-      const zero = makeLine(chart, '#333', 1, 2);
+    // Zero reference line
+    if (data[0]?.values?.length) {
+      const pts = data[0].values;
+      const zero = makeLine(chart, '#2a2a2a', 1, 2);
       zero.setData([
-        { time: (first.time / 1000) as Time, value: 0 },
-        { time: (last.time  / 1000) as Time, value: 0 },
+        { time: (pts[0].time / 1000) as Time, value: 0 },
+        { time: (pts[pts.length - 1].time / 1000) as Time, value: 0 },
       ]);
     }
   }, [data, mainChart]);
