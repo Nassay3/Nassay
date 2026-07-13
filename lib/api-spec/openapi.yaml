@@ -139,7 +139,9 @@ components:
       default: 1m
     DaysParam:
       type: integer
-      default: 5
+      minimum: 1
+      maximum: 2000
+      default: 365
     SymbolInfo:
       type: object
       required: [symbol, baseAsset, quoteAsset, status, minPrice, maxPrice, tickSize, minQty, stepSize]

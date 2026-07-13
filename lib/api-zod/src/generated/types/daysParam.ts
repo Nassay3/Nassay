@@ -6,4 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * @minimum 1
+ * @maximum 2000
+ */
 export type DaysParam = number;

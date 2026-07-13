@@ -48,12 +48,15 @@ export const ListSymbolsResponse = zod.object({
  * @summary Get historical candlestick data from Binance Data Vision
  */
 export const getHistoryQueryIntervalDefault = `1m`;
-export const getHistoryQueryDaysDefault = 5;
+export const getHistoryQueryDaysDefault = 365;
+export const getHistoryQueryDaysMax = 2000;
+
+
 
 export const GetHistoryQueryParams = zod.object({
   "symbol": zod.coerce.string(),
   "interval": zod.coerce.string().default(getHistoryQueryIntervalDefault),
-  "days": zod.coerce.number().default(getHistoryQueryDaysDefault)
+  "days": zod.coerce.number().min(1).max(getHistoryQueryDaysMax).default(getHistoryQueryDaysDefault)
 })
 
 export const GetHistoryResponse = zod.object({
@@ -80,12 +83,15 @@ export const GetHistoryResponse = zod.object({
  * @summary Calculate VWAP indicators
  */
 export const getVwapQueryIntervalDefault = `1m`;
-export const getVwapQueryDaysDefault = 5;
+export const getVwapQueryDaysDefault = 365;
+export const getVwapQueryDaysMax = 2000;
+
+
 
 export const GetVwapQueryParams = zod.object({
   "symbol": zod.coerce.string(),
   "interval": zod.coerce.string().default(getVwapQueryIntervalDefault),
-  "days": zod.coerce.number().default(getVwapQueryDaysDefault)
+  "days": zod.coerce.number().min(1).max(getVwapQueryDaysMax).default(getVwapQueryDaysDefault)
 })
 
 export const GetVwapResponse = zod.object({

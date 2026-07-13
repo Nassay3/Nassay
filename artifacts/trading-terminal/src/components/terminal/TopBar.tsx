@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react';
 import { useTradingStore } from '@/context/TradingContext';
 import { useGet24hrTicker, getGet24hrTickerQueryKey } from '@workspace/api-client-react';
 import { formatNumber, formatVolume } from '@/lib/format';
-import { RefreshCw, ChevronDown, Activity, TrendingUp, TrendingDown } from 'lucide-react';
+import { RefreshCw, ChevronDown, Activity, TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { wsManager } from '@/lib/ws';
 import SymbolPicker from './SymbolPicker';
+import ChatPanel from './ChatPanel';
 
 export default function TopBar() {
   const { activeSymbol } = useTradingStore();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   const tickerParams = { symbol: activeSymbol };
   const { data, refetch, isFetching } = useGet24hrTicker(
@@ -121,9 +123,19 @@ export default function TopBar() {
         >
           <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin text-[#2962ff]' : ''}`} />
         </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-[#666] hover:text-[#2962ff] hover:bg-[#2962ff]/10"
+          onClick={() => setChatOpen(true)}
+        >
+          <Sparkles size={18} />
+        </Button>
       </div>
 
       <SymbolPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
+      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }

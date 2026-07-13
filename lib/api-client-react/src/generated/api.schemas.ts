@@ -13,6 +13,10 @@ export type SymbolParam = string;
 
 export type IntervalParam = string;
 
+/**
+ * @minimum 1
+ * @maximum 2000
+ */
 export type DaysParam = number;
 
 export interface SymbolInfo {

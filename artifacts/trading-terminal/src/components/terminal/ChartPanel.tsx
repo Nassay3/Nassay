@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   createChart, ColorType, IChartApi, ISeriesApi,
-  Time, CandlestickSeries, HistogramSeries, LineSeries, CrosshairMode,
+  Time, CandlestickSeries, HistogramSeries, LineSeries, AreaSeries, LineType, CrosshairMode,
 } from 'lightweight-charts';
 import {
   useTradingStore, Interval, INTERVAL_LABELS, DEFAULT_INDICATOR_SETTINGS,
@@ -10,7 +10,8 @@ import {
 import { useGetHistory, useGetVwap, getGetHistoryQueryKey, getGetVwapQueryKey } from '@workspace/api-client-react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { wsManager } from '@/lib/ws';
-import { Eye, EyeOff, Settings2, ChevronDown, ChevronRight, GripVertical, PanelLeft } from 'lucide-react';
+import { Eye, EyeOff, Settings2, ChevronDown, ChevronRight, GripVertical, PanelLeft, SlidersHorizontal } from 'lucide-react';
+import IndicatorSettingsModal from './IndicatorSettingsModal';
 
 // ── Series helpers ────────────────────────────────────────────────────────────
 
@@ -20,9 +21,31 @@ function makeLine(
   lineWidth: 1 | 2 | 3 = 1,
   lineStyle: 0 | 1 | 2 | 3 = 0,
   visible = true,
+  lineType: LineType = LineType.Simple,
 ): ISeriesApi<'Line'> {
   return chart.addSeries(LineSeries, {
     color,
+    lineWidth,
+    lineStyle,
+    lineType,
+    visible,
+    crosshairMarkerVisible: false,
+    lastValueVisible: true,
+    priceLineVisible: false,
+  });
+}
+
+function makeArea(
+  chart: IChartApi,
+  color: string,
+  lineWidth: 1 | 2 | 3 = 1,
+  lineStyle: 0 | 1 | 2 | 3 = 0,
+  visible = true,
+): ISeriesApi<'Area'> {
+  return chart.addSeries(AreaSeries, {
+    lineColor: color,
+    topColor: color,
+    bottomColor: `${color}20`,
     lineWidth,
     lineStyle,
     visible,
@@ -32,12 +55,60 @@ function makeLine(
   });
 }
 
-function setLineData(series: ISeriesApi<'Line'>, pts: { time: number; value: number | null }[]) {
+function makeHistogram(
+  chart: IChartApi,
+  color: string,
+  visible = true,
+): ISeriesApi<'Histogram'> {
+  return chart.addSeries(HistogramSeries, {
+    color,
+    visible,
+    priceLineVisible: false,
+    lastValueVisible: true,
+  });
+}
+
+function setLineData(series: ISeriesApi<any>, pts: { time: number; value: number | null }[]) {
   series.setData(
     pts
       .filter(p => p.value !== null && Number.isFinite(p.value))
       .map(p => ({ time: (p.time / 1000) as Time, value: p.value! })),
   );
+}
+
+function plotTypeLineStyle(plotType: string): 0 | 1 | 2 | 3 {
+  if (plotType.includes('broken')) return 1;
+  if (plotType === 'cross') return 2;
+  return 0;
+}
+
+function plotTypeLineType(plotType: string): LineType {
+  if (plotType.startsWith('step')) return LineType.WithSteps;
+  return LineType.Simple;
+}
+
+function plotTypeSeriesKind(plotType: string): 'Line' | 'Area' | 'Histogram' {
+  if (plotType === 'histogram' || plotType === 'columns') return 'Histogram';
+  if (plotType === 'area' || plotType === 'area-broken') return 'Area';
+  return 'Line';
+}
+
+function seriesMatchesPlotType(series: ISeriesApi<any>, plotType: string): boolean {
+  return series.seriesType() === plotTypeSeriesKind(plotType);
+}
+
+function createSeriesForPlotType(
+  chart: IChartApi,
+  plotType: string,
+  color: string,
+  lineWidth: 1 | 2 | 3,
+  lineStyle: 0 | 1 | 2 | 3,
+  visible: boolean,
+): ISeriesApi<any> {
+  const kind = plotTypeSeriesKind(plotType);
+  if (kind === 'Histogram') return makeHistogram(chart, color, visible);
+  if (kind === 'Area') return makeArea(chart, color, lineWidth, lineStyle, visible);
+  return makeLine(chart, color, lineWidth, plotTypeLineStyle(plotType), visible, plotTypeLineType(plotType));
 }
 
 function subChartBase(container: HTMLDivElement) {
@@ -127,14 +198,14 @@ export default function ChartPanel() {
   const seriesRefs = useRef({
     candle:    null as ISeriesApi<'Candlestick'> | null,
     volume:    null as ISeriesApi<'Histogram'>   | null,
-    lines:     new Map<string, ISeriesApi<'Line'>>(),   // key → main line
-    bandLines: new Map<string, ISeriesApi<'Line'>[]>(), // bandKey → [upper,lower] × nBands
+    lines:     new Map<string, ISeriesApi<any>>(),   // key → main line (Line/Area/Histogram)
+    bandLines: new Map<string, ISeriesApi<any>[]>(), // bandKey → [upper,lower] × nBands
   });
   const seriesNameMap = useRef(new Map<ISeriesApi<any>, string>());
 
   const [hoveredValues, setHoveredValues]   = useState<Record<string, number>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-  const [selectedKey, setSelectedKey]       = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen]   = useState(false);
   const [dynamicKeys, setDynamicKeys]       = useState<{ vwma: string[]; mtf: string[] }>({ vwma: [], mtf: [] });
   const dragPane = useRef<SubPane | null>(null);
 
@@ -229,7 +300,7 @@ export default function ChartPanel() {
     const chart = chartRef.current;
     const { lines, bandLines } = seriesRefs.current;
 
-    /** Upsert a single line series and fill its data */
+    /** Upsert a single series and fill its data based on plot type */
     const syncLine = (
       key: string,
       data: { color: string; values: { time: number; value: number | null }[] } | null | undefined,
@@ -239,20 +310,30 @@ export default function ChartPanel() {
       const setting    = indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
       const tfVisible  = isVisibleForInterval(key, interval as Interval);
       const visible    = (setting?.visible ?? true) && tfVisible;
+      const plotType   = setting?.plotType ?? 'line';
+      const color      = setting?.color ?? data.color;
+      const lineWidth  = overrides?.lineWidth ?? setting?.lineWidth ?? 1;
+      const lineStyle  = overrides?.lineStyle ?? setting?.lineStyle ?? 0;
 
       let series = lines.get(key);
+      const existingSeries = series;
+      const needsRecreate = existingSeries && !seriesMatchesPlotType(existingSeries, plotType);
+      if (needsRecreate) {
+        try { chart.removeSeries(existingSeries); } catch {}
+        lines.delete(key);
+        seriesNameMap.current.delete(existingSeries);
+        series = undefined;
+      }
+
       if (!series) {
-        series = makeLine(
-          chart,
-          setting?.color ?? data.color,
-          overrides?.lineWidth ?? setting?.lineWidth ?? 1,
-          overrides?.lineStyle ?? setting?.lineStyle ?? 0,
-          visible,
-        );
+        series = createSeriesForPlotType(chart, plotType, color, lineWidth, lineStyle, visible);
         lines.set(key, series);
         seriesNameMap.current.set(series, key);
       } else {
-        series.applyOptions({ visible, color: setting?.color ?? data.color });
+        series.applyOptions({ visible });
+        if (plotType !== 'histogram' && plotType !== 'columns') {
+          series.applyOptions({ color });
+        }
       }
       setLineData(series, data.values);
     };
@@ -324,39 +405,7 @@ export default function ChartPanel() {
 
     setDynamicKeys({ vwma: vwmaKeys, mtf: mtfKeys });
 
-  }, [vwapData, interval]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Apply settings changes ───────────────────────────────────────────────────
-  useEffect(() => {
-    const { lines, bandLines } = seriesRefs.current;
-
-    lines.forEach((series, key) => {
-      // Resolve group key for dynamic VWMA lines
-      let groupKey = key;
-      if (!indicatorSettings[key] && (key.startsWith('VWMA ') && !key.includes('['))) groupKey = 'VWMA Auto';
-      if (!indicatorSettings[key] && key.includes('['))                                 groupKey = 'VWMA MTF';
-
-      const setting  = indicatorSettings[groupKey] ?? indicatorSettings[key] ?? DEFAULT_INDICATOR_SETTINGS[key];
-      const tfVisible = isVisibleForInterval(key, interval as Interval);
-      const visible  = (setting?.visible ?? true) && tfVisible;
-
-      series.applyOptions({
-        visible,
-        color:     setting?.color     ?? '#ffffff',
-        lineWidth: setting?.lineWidth ?? 1,
-        lineStyle: setting?.lineStyle ?? 0,
-      });
-    });
-
-    bandLines.forEach((bands, bandKey) => {
-      // parentKey is the band key without " Bands" suffix
-      const parentKey = bandKey.replace(' Bands', '');
-      const setting   = indicatorSettings[bandKey] ?? DEFAULT_INDICATOR_SETTINGS[bandKey];
-      const tfOk      = isVisibleForInterval(parentKey, interval as Interval);
-      const visible   = (setting?.visible ?? false) && tfOk;
-      bands.forEach(b => b.applyOptions({ visible, lineStyle: setting?.lineStyle ?? 2 }));
-    });
-  }, [indicatorSettings, interval]);
+  }, [vwapData, interval, indicatorSettings]);
 
   // ── WebSocket live feed ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -423,6 +472,14 @@ export default function ChartPanel() {
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
+
+        <button
+          onClick={() => setSettingsOpen(true)}
+          title="Indicator settings"
+          className="ml-auto p-1.5 rounded-md text-[#666] hover:text-white hover:bg-[#1a1a1a] transition-colors"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -434,8 +491,7 @@ export default function ChartPanel() {
             hoveredValues={hoveredValues}
             expandedGroups={expandedGroups}
             setExpandedGroups={setExpandedGroups}
-            selectedKey={selectedKey}
-            setSelectedKey={setSelectedKey}
+            onOpenSettings={() => setSettingsOpen(true)}
             paneOrder={paneOrder}
             paneVisible={paneVisible}
             onDragStart={handleDragStart}
@@ -467,10 +523,7 @@ export default function ChartPanel() {
           })}
         </div>
 
-        {/* Settings panel */}
-        {selectedKey && (
-          <SettingsPanel name={selectedKey} onClose={() => setSelectedKey(null)} />
-        )}
+        <IndicatorSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       </div>
     </div>
   );
@@ -480,15 +533,14 @@ export default function ChartPanel() {
 
 function IndicatorSidebar({
   groups, dynamicKeys, hoveredValues, expandedGroups, setExpandedGroups,
-  selectedKey, setSelectedKey, paneOrder, paneVisible, onDragStart, onDragOver, onDrop,
+  onOpenSettings, paneOrder, paneVisible, onDragStart, onDragOver, onDrop,
 }: {
   groups: IndicatorGroup[];
   dynamicKeys: { vwma: string[]; mtf: string[] };
   hoveredValues: Record<string, number>;
   expandedGroups: Record<string, boolean>;
   setExpandedGroups: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  selectedKey: string | null;
-  setSelectedKey: (k: string | null) => void;
+  onOpenSettings: () => void;
   paneOrder: SubPane[];
   paneVisible: Record<SubPane, boolean>;
   onDragStart: (p: SubPane) => void;
@@ -528,7 +580,7 @@ function IndicatorSidebar({
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0 ml-1">
                         <EyeToggle settingKey={pane} visible={vis} onToggle={() => toggleIndicator(pane)} />
-                        <button onClick={() => setSelectedKey(pane)} className="text-[#555] hover:text-[#aaa] p-0.5 rounded">
+                        <button onClick={onOpenSettings} className="text-[#555] hover:text-[#aaa] p-0.5 rounded">
                           <Settings2 size={11} />
                         </button>
                       </div>
@@ -554,7 +606,7 @@ function IndicatorSidebar({
                       hovered={hoveredValues[key]}
                       isTfHidden={!isVisibleForInterval(key, interval as Interval)}
                       onToggle={() => toggleIndicator(group.settingKey!)}
-                      onSettings={() => setSelectedKey(group.settingKey!)}
+                      onSettings={onOpenSettings}
                     />
                   );
                 })}
@@ -582,7 +634,7 @@ function IndicatorSidebar({
                     isTfHidden={tfHidden}
                     isBand={row.isBand}
                     onToggle={() => toggleIndicator(row.key)}
-                    onSettings={() => setSelectedKey(row.key)}
+                    onSettings={onOpenSettings}
                   />
                 );
               })}
@@ -663,88 +715,6 @@ function GroupHeader({ label, isExpanded, onToggle, settingKey }: {
       {settingKey && (
         <EyeToggle settingKey={settingKey} visible={setting?.visible !== false} onToggle={() => toggleIndicator(settingKey)} />
       )}
-    </div>
-  );
-}
-
-// ── Settings panel ─────────────────────────────────────────────────────────────
-
-function SettingsPanel({ name, onClose }: { name: string; onClose: () => void }) {
-  const { indicatorSettings, updateIndicator, resetIndicator } = useTradingStore();
-  const setting = indicatorSettings[name] ?? DEFAULT_INDICATOR_SETTINGS[name];
-  const [tab, setTab] = useState<'style' | 'visibility'>('style');
-  if (!setting) return null;
-  return (
-    <div className="w-[210px] shrink-0 border-l border-[#1a1a1a] bg-[#0c0c0c] flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#1a1a1a] bg-[#101014]">
-        <span className="text-[11px] font-bold text-[#d1d4dc] truncate">{name}</span>
-        <button onClick={onClose} className="text-[#555] hover:text-white text-lg leading-none ml-2">×</button>
-      </div>
-      <div className="flex border-b border-[#1a1a1a]">
-        {(['style', 'visibility'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 py-1.5 text-[10px] font-medium capitalize transition-colors ${tab === t ? 'text-[#2962ff] border-b-2 border-[#2962ff]' : 'text-[#555] hover:text-[#999]'}`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4 text-[11px]">
-        {tab === 'style' && (
-          <>
-            <Row label="Color">
-              <div className="flex items-center gap-2">
-                <input type="color" value={setting.color}
-                  onChange={e => updateIndicator(name, { color: e.target.value })}
-                  className="w-7 h-7 p-0 border-0 bg-transparent rounded cursor-pointer"
-                />
-                <span className="text-[10px] text-[#666] font-mono">{setting.color}</span>
-              </div>
-            </Row>
-            <Row label={`Width: ${setting.lineWidth}px`}>
-              <input type="range" min="1" max="3" value={setting.lineWidth}
-                onChange={e => updateIndicator(name, { lineWidth: parseInt(e.target.value) as any })}
-                className="w-full accent-[#2962ff]"
-              />
-            </Row>
-            <Row label="Line style">
-              <select value={setting.lineStyle}
-                onChange={e => updateIndicator(name, { lineStyle: parseInt(e.target.value) as any })}
-                className="w-full bg-[#101014] border border-[#2a2a2a] text-[#d1d4dc] p-1.5 rounded text-[11px] focus:outline-none focus:border-[#2962ff]"
-              >
-                <option value={0}>Solid</option>
-                <option value={1}>Dotted</option>
-                <option value={2}>Dashed</option>
-                <option value={3}>Large Dashed</option>
-              </select>
-            </Row>
-          </>
-        )}
-        {tab === 'visibility' && (
-          <Row label="Show on chart">
-            <button
-              onClick={() => updateIndicator(name, { visible: !setting.visible })}
-              className={`flex items-center gap-2 p-1.5 rounded transition-colors ${setting.visible ? 'text-[#2962ff]' : 'text-[#555]'}`}
-            >
-              {setting.visible ? <Eye size={16} /> : <EyeOff size={16} />}
-              <span>{setting.visible ? 'Visible' : 'Hidden'}</span>
-            </button>
-          </Row>
-        )}
-      </div>
-      <div className="flex gap-2 px-3 py-2 border-t border-[#1a1a1a] bg-[#101014]">
-        <button onClick={onClose} className="flex-1 py-1.5 text-[11px] bg-[#2962ff] text-white rounded hover:bg-[#1e4fcf] transition-colors">OK</button>
-        <button onClick={() => resetIndicator(name)} className="flex-1 py-1.5 text-[11px] bg-[#1a1a1a] text-[#999] rounded hover:bg-[#222] transition-colors">Reset</button>
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-[10px] text-[#666]">{label}</span>
-      {children}
     </div>
   );
 }

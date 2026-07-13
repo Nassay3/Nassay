@@ -3,6 +3,26 @@ import { wsManager } from '@/lib/ws';
 
 export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '6h' | '12h' | '1d' | '1w';
 
+/** Plot type matching TradingView's line style menu */
+export type PlotType =
+  | 'line' | 'line-broken' | 'gradient' | 'step' | 'step-broken' | 'gradient-markers'
+  | 'histogram' | 'cross' | 'area' | 'area-broken' | 'columns' | 'circles';
+
+export const PLOT_TYPE_LABELS: Record<PlotType, { ar: string; en: string }> = {
+  'line':            { ar: 'خط',                         en: 'Line' },
+  'line-broken':     { ar: 'خط ذو فواصل',                en: 'Line with breaks' },
+  'gradient':        { ar: 'خط متدرج',                   en: 'Gradient line' },
+  'step':            { ar: 'خط خطوة',                    en: 'Step line' },
+  'step-broken':     { ar: 'خط خطوة مع فواصل',          en: 'Step line with breaks' },
+  'gradient-markers':{ ar: 'متدرج مع معينات',           en: 'Gradient with markers' },
+  'histogram':       { ar: 'المدرج الإحصائي',            en: 'Histogram' },
+  'cross':           { ar: 'تقاطع',                      en: 'Cross' },
+  'area':            { ar: 'مساحة',                      en: 'Area' },
+  'area-broken':     { ar: 'مساحة يتخللها فواصل',        en: 'Area with breaks' },
+  'columns':         { ar: 'القيم الأعمدة',              en: 'Columns' },
+  'circles':         { ar: 'دوائر',                      en: 'Circles' },
+};
+
 export const INTERVAL_LABELS: Record<Interval, string> = {
   '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h',
   '4h': '4h', '6h': '6h', '12h': '12h', '1d': '1D', '1w': '1W',
@@ -30,45 +50,50 @@ export interface IndicatorSetting {
   color: string;
   lineWidth: 1 | 2 | 3;
   lineStyle: 0 | 1 | 2 | 3;
+  plotType?: PlotType;
 }
 
 export interface IndicatorSettings {
   [key: string]: IndicatorSetting;
 }
 
+function s(visible: boolean, color: string, lineWidth: 1|2|3 = 1, lineStyle: 0|1|2|3 = 0, plotType: PlotType = 'line'): IndicatorSetting {
+  return { visible, color, lineWidth, lineStyle, plotType };
+}
+
 export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettings = {
   // Multi VWAP (overlay)
-  'VWAP 21':  { visible: true,  color: '#35e8ff', lineWidth: 1, lineStyle: 0 },
-  'VWAP 48':  { visible: true,  color: '#f995ff', lineWidth: 1, lineStyle: 0 },
-  'VWAP 84':  { visible: true,  color: '#acff35', lineWidth: 1, lineStyle: 0 },
-  'VWAP 175': { visible: true,  color: '#5b9cf6', lineWidth: 1, lineStyle: 0 },
-  'VWAP 480': { visible: true,  color: '#ffe0b2', lineWidth: 1, lineStyle: 0 },
-  'VWAP 840': { visible: true,  color: '#f3ff00', lineWidth: 1, lineStyle: 0 },
+  'VWAP 21':  s(true,  '#35e8ff'),
+  'VWAP 48':  s(true,  '#f995ff'),
+  'VWAP 84':  s(true,  '#acff35'),
+  'VWAP 175': s(true,  '#5b9cf6'),
+  'VWAP 480': s(true,  '#ffe0b2'),
+  'VWAP 840': s(true,  '#f3ff00'),
   // Daily VWAP
-  'Daily VWAP':             { visible: true,  color: '#9598a1', lineWidth: 2, lineStyle: 0 },
-  'Prev Daily VWAP':        { visible: true,  color: '#e91e63', lineWidth: 1, lineStyle: 1 },
-  'Daily VWAP Bands':       { visible: false, color: '#4caf50', lineWidth: 1, lineStyle: 2 },
+  'Daily VWAP':       s(true,  '#9598a1', 2, 0),
+  'Prev Daily VWAP':  s(true,  '#e91e63', 1, 1),
+  'Daily VWAP Bands': s(false, '#4caf50', 1, 2),
   // Weekly VWAP
-  'Weekly VWAP':            { visible: true,  color: '#673ab7', lineWidth: 2, lineStyle: 0 },
-  'Prev Weekly VWAP':       { visible: true,  color: '#ff5252', lineWidth: 1, lineStyle: 1 },
-  'Weekly VWAP Bands':      { visible: false, color: '#4caf50', lineWidth: 1, lineStyle: 2 },
+  'Weekly VWAP':       s(true,  '#673ab7', 2, 0),
+  'Prev Weekly VWAP':  s(true,  '#ff5252', 1, 1),
+  'Weekly VWAP Bands': s(false, '#4caf50', 1, 2),
   // Session VWAPs
-  'Session Asia':           { visible: true,  color: '#f9a825', lineWidth: 2, lineStyle: 0 },
-  'Session Asia Bands':     { visible: false, color: '#f9a825', lineWidth: 1, lineStyle: 2 },
-  'Session London':         { visible: true,  color: '#9c27b0', lineWidth: 2, lineStyle: 0 },
-  'Session London Bands':   { visible: false, color: '#9c27b0', lineWidth: 1, lineStyle: 2 },
-  'Session NY':             { visible: true,  color: '#00e5ff', lineWidth: 2, lineStyle: 0 },
-  'Session NY Bands':       { visible: false, color: '#00e5ff', lineWidth: 1, lineStyle: 2 },
-  'Session Daily':          { visible: true,  color: '#9598a1', lineWidth: 2, lineStyle: 0 },
-  'Session Daily Bands':    { visible: true,  color: '#4caf50', lineWidth: 1, lineStyle: 2 },
+  'Session Asia':         s(true,  '#f9a825', 2, 0),
+  'Session Asia Bands':   s(false, '#f9a825', 1, 2),
+  'Session London':       s(true,  '#9c27b0', 2, 0),
+  'Session London Bands': s(false, '#9c27b0', 1, 2),
+  'Session NY':           s(true,  '#00e5ff', 2, 0),
+  'Session NY Bands':     s(false, '#00e5ff', 1, 2),
+  'Session Daily':        s(true,  '#9598a1', 2, 0),
+  'Session Daily Bands':  s(true,  '#4caf50', 1, 2),
   // Sub-panes
-  'Dollar Volume':          { visible: true,  color: '#2196f3', lineWidth: 1, lineStyle: 0 },
-  'Session Volume':         { visible: true,  color: '#4caf50', lineWidth: 1, lineStyle: 0 },
-  'Relative QV':            { visible: true,  color: '#ff9800', lineWidth: 2, lineStyle: 0 },
-  'ZScore':                 { visible: true,  color: '#ff9800', lineWidth: 1, lineStyle: 0 },
+  'Dollar Volume':  s(true, '#2196f3', 1, 0),
+  'Session Volume': s(true, '#4caf50', 1, 0),
+  'Relative QV':    s(true, '#ff9800', 2, 0),
+  'ZScore':         s(true, '#ff9800', 1, 0),
   // VWMA groups
-  'VWMA Auto':              { visible: true,  color: '#acff35', lineWidth: 1, lineStyle: 0 },
-  'VWMA MTF':               { visible: false, color: '#acff35', lineWidth: 1, lineStyle: 0 },
+  'VWMA Auto': s(true,  '#acff35'),
+  'VWMA MTF':  s(false, '#acff35'),
 };
 
 export type SubPane = 'Dollar Volume' | 'Session Volume' | 'Relative QV' | 'ZScore';
@@ -80,6 +105,7 @@ interface TradingContextType {
   interval: Interval;
   setInterval: (i: Interval) => void;
   indicatorSettings: IndicatorSettings;
+  setIndicatorSettings: (settings: IndicatorSettings) => void;
   updateIndicator: (name: string, patch: Partial<IndicatorSetting>) => void;
   resetIndicator:  (name: string) => void;
   toggleIndicator: (name: string) => void;
@@ -123,7 +149,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     <TradingContext.Provider value={{
       activeSymbol, setActiveSymbol,
       interval, setInterval,
-      indicatorSettings, updateIndicator, resetIndicator, toggleIndicator,
+      indicatorSettings, setIndicatorSettings, updateIndicator, resetIndicator, toggleIndicator,
       paneOrder, setPaneOrder,
       sidebarOpen, setSidebarOpen,
     }}>
