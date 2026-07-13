@@ -1,0 +1,91 @@
+Volume in dollar per candle
+
+import pandas as pd
+import numpy as np
+
+def calculate_dollar_volume(data, lengthMA=30, buy_threshold_in_dollar=100000, optimal_buy_threshold=1000000):
+    # حساب hlc3
+    hlc3 = (data['High'] + data['Low'] + data['Close']) / 3
+    
+    # حساب قيمة التداول بالدولار
+    tdv = hlc3 * data['Volume']
+    
+    # تلوين الأعمدة بناءً على مقارنة الإغلاق بالافتتاح
+    barcolor = np.where(data['Close'] < data['Open'], 'gray', 'blue')
+    
+    # حساب المتوسط المتحرك لقيمة التداول بالدولار
+    tdv_sma = tdv.rolling(window=lengthMA).mean()
+    
+    # إضافة الأعمدة المحسوبة إلى البيانات
+    data['QV_Dollar'] = tdv
+    data['QV_MA'] = tdv_sma
+    data['BarColor'] = barcolor
+    data['BuyThresholdMinimum'] = buy_threshold_in_dollar
+    data['OptimalBuyThreshold'] = optimal_buy_threshold
+    
+    return data
+
+# الدالة جاهزة للاستخدام ويمكن دمجها مع أي كود تريده
+
+Relative QV Dollar (R/QVOL)
+
+
+import pandas as pd
+
+def calculate_relative_qv_dollar(data):
+    # إعداد البيانات اللازمة
+    hlc3 = (data['High'] + data['Low'] + data['Close']) / 3
+    tdv = hlc3 * data['Volume']
+    
+    # حساب المتوسط المتحرك لمدة 30 دقيقة
+    tdv_sma = tdv.rolling(window=30).mean()
+    
+    # حساب المتوسط المتحرك لحجم التداول لمدة 5 أيام (بناءً على بيانات 1 دقيقة)
+    volumeLength5days = 1800
+    averageVolume_5days = tdv_sma.rolling(window=volumeLength5days).mean()
+    
+    # حساب حجم التداول النسبي لمدة 5 أيام
+    relativeVolume_5Days = tdv_sma / averageVolume_5days
+    
+    # إضافة الأعمدة المحسوبة إلى البيانات
+    data['RelativeQV_Dollar_5Days'] = relativeVolume_5Days
+    
+    # عتبة الشراء الأدنى
+    buy_threshold_minimum = 5
+    data['BuyThresholdMinimum'] = buy_threshold_minimum
+    
+    return data
+
+# الدالة جاهزة للاستخدام ويمكن دمجها مع أي كود تريده
+
+
+Session Volume 
+
+import pandas as pd
+import numpy as np
+
+# حساب حجم الجلسة
+def computeSessionVolume(data, isNewPeriod):
+    hlc3 = (data['High'] + data['Low'] + data['Close']) / 3
+    sumVol = np.where(isNewPeriod, hlc3 * data['Volume'], hlc3 * data['Volume'] + np.roll(hlc3 * data['Volume'], 1))
+    return sumVol
+
+# التحقق من تغيير الوقت
+def timeChange(data, period):
+    return data.index.to_period(period).to_timestamp() != data.index.to_period(period).to_timestamp().shift(1)
+
+# حساب حجم الجلسة المتراكم
+def calculate_session_volume(data):
+    newSessionD = timeChange(data, "D")
+    session_volume = computeSessionVolume(data, newSessionD)
+    data['SessionVolumeAccumulated'] = session_volume
+    
+    buy_threshold_in_dollar = 10000000  # 10M$
+    optimal_buy_threshold = 50000000    # 50M$
+    
+    data['BuyThreshold'] = buy_threshold_in_dollar
+    data['OptimalBuyThreshold'] = optimal_buy_threshold
+    
+    return data
+
+# الدالة جاهزة للاستخدام ويمكن دمجها مع أي كود تريده

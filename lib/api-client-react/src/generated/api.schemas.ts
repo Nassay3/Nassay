@@ -157,10 +157,12 @@ export interface VwapResponse {
   dollarVolume: VwapResponseDollarVolume;
   sessionVolumeAccumulated: VwapResponseSessionVolumeAccumulated;
   relativeQv: VwapResponseRelativeQv;
-  /** VWAP ULTRA1 Custom timeframe-aware multi-period VWAP */
+  /** VWMA auto-selected periods for current timeframe */
   vwapUltra1?: VwapLine[];
   /** VWMA Multi-Timeframe Map from higher timeframes */
   vwmaMtfMap?: VwapLine[];
+  /** Z-Score oscillator (periods 48 and 84) */
+  zScore?: VwapLine[];
 }
 
 export type ListSymbolsParams = {

@@ -1,0 +1,62 @@
+يعرض الفيواب اليومي واليوم السابق والاسبوعي والاسبوع السابق صح للبتكوين ١٠٠٪؜
+
+
+
+وهذا للجلسات بالضبط
+# إعادة تحميل البيانات مع تسمية الأعمدة يدويًا
+‏columns = [
+‏    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+‏    'close_time', 'quote_asset_volume', 'number_of_trades',
+‏    'taker_buy_base', 'taker_buy_quote', 'ignore'
+]
+‏df = pd.read_csv('/mnt/data/BTCUSDT-15m-2024-10.csv', names=columns)
+‏df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+‏df.set_index('timestamp', inplace=True)
+
+# حساب hlc3
+‏df['hlc3'] = (df['high'] + df['low'] + df['close']) / 3
+
+# تعريف الجلسات
+‏session_asia = (df.index.time >= pd.to_datetime("00:00").time()) & (df.index.time < pd.to_datetime("08:00").time())
+‏session_london = (df.index.time >= pd.to_datetime("08:00").time()) & (df.index.time < pd.to_datetime("14:30").time())
+‏session_ny = (df.index.time >= pd.to_datetime("14:30").time()) & (df.index.time < pd.to_datetime("23:59").time())
+
+# بداية كل جلسة
+‏df['Asia_start'] = (df.index.hour == 0) & (df.index.minute == 0)
+‏df['London_start'] = (df.index.hour == 8) & (df.index.minute == 0)
+‏df['NY_start'] = (df.index.hour == 14) & (df.index.minute == 30)
+
+‏def calculate_vwap_per_session(df, session_flag, session_start_flag):
+‏    vwap = []
+‏    cum_vol_price = 0
+‏    cum_vol = 0
+‏    for i in range(len(df)):
+‏        if session_flag[i]:
+‏            if session_start_flag[i]:
+‏                cum_vol_price = df['hlc3'].iloc[i] * df['volume'].iloc[i]
+‏                cum_vol = df['volume'].iloc[i]
+‏            else:
+‏                cum_vol_price += df['hlc3'].iloc[i] * df['volume'].iloc[i]
+‏                cum_vol += df['volume'].iloc[i]
+‏            vwap.append(cum_vol_price / cum_vol if cum_vol != 0 else np.nan)
+‏        else:
+‏            vwap.append(np.nan)
+‏    return vwap
+
+# حساب VWAP للجلسات
+‏df['vwap_asia'] = calculate_vwap_per_session(df, session_asia, df['Asia_start'])
+‏df['vwap_london'] = calculate_vwap_per_session(df, session_london, df['London_start'])
+‏df['vwap_ny'] = calculate_vwap_per_session(df, session_ny, df['NY_start'])
+
+# رسم الشارت
+‏plt.figure(figsize=(16, 6))
+‏plt.plot(df.index, df['close'], color='green', label='Price', linewidth=0.4)
+‏plt.plot(df.index, df['vwap_asia'], color='yellow', label='Asia VWAP', linewidth=1.2)
+‏plt.plot(df.index, df['vwap_london'], color='blue', label='London VWAP', linewidth=1.2)
+‏plt.plot(df.index, df['vwap_ny'], color='purple', label='NY VWAP', linewidth=1.2)
+‏plt.title('جلسات VWAP - BTCUSDT 15m (أكتوبر 2024)')
+‏plt.legend()
+‏plt.grid(True)
+‏plt.xticks(rotation=45)
+‏plt.tight_layout()
+‏plt.show()

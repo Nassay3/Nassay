@@ -392,9 +392,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VwapLine"
-          description: VWAP ULTRA1 Custom timeframe-aware multi-period VWAP
+          description: VWMA auto-selected periods for current timeframe
         vwmaMtfMap:
           type: array
           items:
             $ref: "#/components/schemas/VwapLine"
           description: VWMA Multi-Timeframe Map from higher timeframes
+        zScore:
+          type: array
+          items:
+            $ref: "#/components/schemas/VwapLine"
+          description: Z-Score oscillator (periods 48 and 84)

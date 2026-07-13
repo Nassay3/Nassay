@@ -1,0 +1,68 @@
+Session vwap
+
+import pandas as pd
+import numpy as np
+
+# حساب VWAP وحساب الانحراف المعياري
+def computeVWAP(src, volume, isNewPeriod):
+    sumSrcVol = np.where(isNewPeriod, src * volume, src * volume + np.roll(src * volume, 1))
+    sumVol = np.where(isNewPeriod, volume, volume + np.roll(volume, 1))
+    sumSrcSrcVol = np.where(isNewPeriod, volume * np.power(src, 2), volume * np.power(src, 2) + np.roll(volume * np.power(src, 2), 1))
+    _vwap = sumSrcVol / sumVol
+    variance = sumSrcSrcVol / sumVol - np.power(_vwap, 2)
+    variance = np.where(variance < 0, 0, variance)
+    stDev = np.sqrt(variance)
+    return _vwap, stDev
+
+# حساب نطاقات الانحراف المعياري
+def compute_stDEV(_vwap, stDev, stDevMultiplier_1, stDevMultiplier_2):
+    upperBand_2 = _vwap + stDev * stDevMultiplier_2
+    upperBand_1 = _vwap + stDev * stDevMultiplier_1
+    lowerBand_1 = _vwap - stDev * stDevMultiplier_1
+    lowerBand_2 = _vwap - stDev * stDevMultiplier_2
+    return upperBand_2, upperBand_1, lowerBand_1, lowerBand_2
+
+# حساب VWAP لكل جلسة
+def calculate_session_vwap(data, session_start, session_end, stDevMultiplier_1, stDevMultiplier_2):
+    session_data = data.between_time(session_start, session_end)
+    src = (session_data['High'] + session_data['Low'] + session_data['Close']) / 3
+    volume = session_data['Volume']
+    isNewPeriod = (session_data.index.to_period('D') != np.roll(session_data.index.to_period('D'), 1))
+
+    vwap, stDev = computeVWAP(src, volume, isNewPeriod)
+    s2up, s1up, s1dn, s2dn = compute_stDEV(vwap, stDev, stDevMultiplier_1, stDevMultiplier_2)
+    
+    session_data['VWAP'] = vwap
+    session_data['s2up'] = s2up
+    session_data['s1up'] = s1up
+    session_data['s1dn'] = s1dn
+    session_data['s2dn'] = s2dn
+    
+    return session_data
+
+# إعداد بيانات الجلسات المختلفة
+def calculate_all_sessions(data, stDevMultiplier_1, stDevMultiplier_2):
+    asia_vwap = calculate_session_vwap(data, '00:00', '08:00', stDevMultiplier_1, stDevMultiplier_2)
+    london_vwap = calculate_session_vwap(data, '08:00', '14:30', stDevMultiplier_1, stDevMultiplier_2)
+    ny_vwap = calculate_session_vwap(data, '14:30', '00:00', stDevMultiplier_1, stDevMultiplier_2)
+    
+    return asia_vwap, london_vwap, ny_vwap
+
+# حساب VWAP اليومي
+def calculate_daily_vwap(data, stDevMultiplier_1, stDevMultiplier_2):
+    src = (data['High'] + data['Low'] + data['Close']) / 3
+    volume = data['Volume']
+    isNewPeriod = (data.index.to_period('D') != np.roll(data.index.to_period('D'), 1))
+    
+    vwap, stDev = computeVWAP(src, volume, isNewPeriod)
+    s2up, s1up, s1dn, s2dn = compute_stDEV(vwap, stDev, stDevMultiplier_1, stDevMultiplier_2)
+    
+    data['VWAP'] = vwap
+    data['s2up'] = s2up
+    data['s1up'] = s1up
+    data['s1dn'] = s1dn
+    data['s2dn'] = s2dn
+    
+    return data
+
+# يمكن الآن استخدام هذه الدوال مع بياناتك لتحليل جلسات VWAP وحساب نطاقات الانحراف المعياري.

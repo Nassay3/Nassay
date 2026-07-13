@@ -244,7 +244,7 @@ export const GetVwapResponse = zod.object({
   "time": zod.number(),
   "value": zod.number().nullable()
 }))
-})).optional().describe('VWAP ULTRA1 Custom timeframe-aware multi-period VWAP'),
+})).optional().describe('VWMA auto-selected periods for current timeframe'),
   "vwmaMtfMap": zod.array(zod.object({
   "name": zod.string(),
   "color": zod.string(),
@@ -252,7 +252,15 @@ export const GetVwapResponse = zod.object({
   "time": zod.number(),
   "value": zod.number().nullable()
 }))
-})).optional().describe('VWMA Multi-Timeframe Map from higher timeframes')
+})).optional().describe('VWMA Multi-Timeframe Map from higher timeframes'),
+  "zScore": zod.array(zod.object({
+  "name": zod.string(),
+  "color": zod.string(),
+  "values": zod.array(zod.object({
+  "time": zod.number(),
+  "value": zod.number().nullable()
+}))
+})).optional().describe('Z-Score oscillator (periods 48 and 84)')
 })
 
 

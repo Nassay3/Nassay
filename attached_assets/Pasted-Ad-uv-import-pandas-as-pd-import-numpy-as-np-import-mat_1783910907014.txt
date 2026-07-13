@@ -1,0 +1,235 @@
+Ad uv
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# -----------------------------
+‎# بعض الدوال المساعدة
+# -----------------------------
+
+def nz(series, fill=0):
+‎    """استبدال القيم الخالية NaN بقيمة افتراضية."""
+    return series.fillna(fill)
+
+def sma(series, length):
+‎    """متوسط متحرك بسيط."""
+    return series.rolling(window=length, min_periods=1).mean()
+
+def rma(series, length):
+    """
+    Wilder's Moving Average (RMA/SMMA) 
+‎    تكافئ تقريبًا EMA(alpha=1/length) مع adjust=False.
+    """
+    return series.ewm(alpha=1/length, adjust=False).mean()
+
+def true_range(df):
+    """
+‎    حساب الـ True Range كما في Pine Script:
+      TR = max( (high - low), |high - close_prev|, |low - close_prev| )
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    return pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+# -----------------------------
+‎# دالة رئيسية لمؤشر "UV [cI8DH]"
+# -----------------------------
+def ultimate_volume(
+    df,
+    plot_height=100,           # Plot height in % (إذا أردت عرضه فوق الشارت الرئيسي)
+    money_volume=False,        # تفعيل ضرب الحجم في السعر (hlc3)
+    aggregation="smoothed MA", # نوع التجميع: disable / simple MA / smoothed MA / cumulative
+    length=30,                 # الطول الأساسي للمتوسط
+    vol_detect_len=150,        # الطول المستخدم لرصد فترات الحجم العالي/المنخفض
+    signal_len=9,              # قد يُستخدم كمتوسط أقصر لاكتشاف القمم/القِيعان بالحجم
+    supply_threshold=2.5,      # عتبة اكتشاف الـ supply/demand absorption (0=تعطيل)
+    separate_AD_MAs=False,     # فصل متوسط التراكم ومتوسط التوزيع
+    AD_ma_scale=4,             # مقياس إضافي لطول متوسط التراكم/التوزيع (مثلاً length * 4)
+    AD_weight=0.0             # وزن التراكم/التوزيع (1 = كل الحجم مثل OBV)
+):
+    """
+‎    يجمع المنطق الأساسي لمؤشر UV [cI8DH]:
+‎      - حساب حجم التداول الاعتيادي + جزء التراكم/التوزيع (A/D).
+‎      - رصد الحجم العالي والمنخفض.
+‎      - كشف امتصاص العرض/الطلب (supply/demand absorption).
+‎      - إمكانية اختيار نوع التجميع (تراكمي، متوسط بسيط، متوسط مُنعّم).
+‎      - إمكانية فصل متوسط التراكم ومتوسط التوزيع (acc/ dist).
+‎    يعيد DataFrame يحتوي الأعمدة المحسوبة.
+
+‎    الأعمدة الناتجة الأهم:
+      - volume_raw    : حجم التداول الأصلي.
+      - volume_final  : حجم التداول بعد ضربه في السعر (إن تم تفعيل money_volume).
+      - bop           : نسبة (close - open)/(high - low).
+      - AD_ratio      : دمج bop مع وزن AD_weight.
+      - AD_portion    : مقدار الحجم المنسوب للتراكم/التوزيع.
+      - AD_agg        : نتيجة تجميع AD_portion (MA أو cumulative).
+      - AD_plot       : نفس AD_agg بعد تطبيق plot_height (إذا لم يكن cumulative).
+      - acc_portion   : الجزء الموجب (تراكم).
+      - dist_portion  : الجزء السالب (توزيع).
+      - acc_agg/dist_agg : تجميع منفصل للتراكم والتوزيع.
+      - high_vol/low_vol : أعلام منطقية لاكتشاف الحجم العالي أو المنخفض.
+      - supply_demand : قيمة تقديرية لامتصاص العرض/الطلب (للتجربة).
+    """
+
+    df = df.copy()
+
+    # -----------------------------
+‎    # 1) تحضير الأعمدة الأساسية
+    # -----------------------------
+‎    # حجم التداول الخام
+    df['volume_raw'] = df['volume']
+
+‎    # حساب hlc3
+    df['hlc3'] = (df['high'] + df['low'] + df['close']) / 3.0
+
+‎    # إذا تم تفعيل money_volume نضرب الحجم في hlc3
+    if money_volume:
+        df['volume_final'] = df['volume_raw'] * df['hlc3']
+    else:
+        df['volume_final'] = df['volume_raw']
+
+‎    # تجنب القسمة على صفر في حالة high==low
+    # bodysize = (close - open), fullrange = (high - low)
+    bodysize = df['close'] - df['open']
+    fullrange = (df['high'] - df['low']).replace(0, 1e-9)  # تجنب صفر
+
+    # BOP = (close - open) / (high - low)
+    df['bop'] = bodysize / fullrange
+
+‎    # دمج bop مع وزن AD_weight
+‎    # الفكرة شبيهة بما ورد في ADMF: AD_ratio = (1-AD_weight)*bop + sign(bop)*AD_weight
+    df['AD_ratio'] = (1 - AD_weight)*df['bop'] + np.sign(df['bop'])*AD_weight
+
+‎    # الجزء المنسوب للتراكم/التوزيع
+    df['AD_portion'] = df['volume_final'] * df['AD_ratio']
+
+    # -----------------------------
+‎    # 2) اختيار نوع التجميع (Aggregation)
+    # -----------------------------
+    def do_aggregation(series, mode, length_):
+‎        """تطبيق نوع التجميع."""
+        if mode == "cumulative":
+            return series.cumsum()
+        elif mode == "simple MA":
+            return sma(series, length_)
+        elif mode == "smoothed MA":
+            return rma(series, length_)
+        else:
+            # disable أو أي قيمة أخرى
+            return series  # أو يمكن إرجاع NaN
+
+    df['AD_agg'] = do_aggregation(df['AD_portion'], aggregation, length)
+
+‎    # إذا لم يكن cumulative ونريد تغيير ارتفاع الرسم
+‎    # (إذا plot_height != 100)
+    def scale_plot(series, height):
+        return (100.0/height)*series
+
+    if aggregation == "cumulative" or plot_height == 100:
+        df['AD_plot'] = df['AD_agg']
+    else:
+        df['AD_plot'] = scale_plot(df['AD_agg'], plot_height)
+
+    # -----------------------------
+‎    # 3) فصل التراكم (acc) والتوزيع (dist) اختياري
+    # -----------------------------
+    if separate_AD_MAs:
+‎        # نأخذ فقط القيم الموجبة (acc) والسالبة (dist)
+        df['acc_portion'] = df['AD_portion'].where(df['AD_portion'] > 0, 0)
+        df['dist_portion'] = df['AD_portion'].where(df['AD_portion'] < 0, 0)
+
+‎        # نجمعها أو نطبق MA حسب نفس الـ aggregation
+‎        # لكن مع إمكانية استخدام طول مختلف (مثلاً length * AD_ma_scale)
+        acc_len = int(length*AD_ma_scale)
+        dist_len = int(length*AD_ma_scale)
+
+        df['acc_agg'] = do_aggregation(df['acc_portion'], aggregation, acc_len)
+        df['dist_agg'] = do_aggregation(df['dist_portion'], aggregation, dist_len)
+    else:
+        df['acc_portion'] = np.nan
+        df['dist_portion'] = np.nan
+        df['acc_agg'] = np.nan
+        df['dist_agg'] = np.nan
+
+    # -----------------------------
+‎    # 4) رصد الحجم العالي والمنخفض
+    # -----------------------------
+‎    # حساب متوسط طويل (vol_detect_len) للحجم
+‎    # وحساب متوسط أقصر (signal_len) مثلاً
+    df['vol_rma_long'] = rma(df['volume_final'], vol_detect_len)
+    df['vol_rma_short'] = rma(df['volume_final'], signal_len)
+
+‎    # تعريف بسيط: إذا الحجم > 1.5 * المتوسط الطويل => high_vol
+‎    #            إذا الحجم < 0.5 * المتوسط الطويل => low_vol
+‎    # (يمكنك التعديل حسب الحاجة)
+    df['high_vol'] = df['volume_final'] > (1.5 * df['vol_rma_long'])
+    df['low_vol'] = df['volume_final'] < (0.5 * df['vol_rma_long'])
+
+    # -----------------------------
+‎    # 5) كشف الـ supply/demand absorption (تقريبي)
+    # -----------------------------
+‎    # فكرة: نقيس متوسط مطلق AD_portion على مدى vol_detect_len
+‎    # ثم نرى إن كان أعلى من threshold معين
+    if supply_threshold > 0:
+        df['abs_AD_rma'] = rma(df['AD_portion'].abs(), vol_detect_len)
+‎        # لو كان abs_AD_rma أكبر من supply_threshold * متوسط الحجم => احتمال وجود امتصاص
+        df['supply_demand'] = df['abs_AD_rma'] - (supply_threshold * df['vol_rma_long'])
+    else:
+        df['abs_AD_rma'] = np.nan
+        df['supply_demand'] = np.nan
+
+‎    # إذا كانت supply_demand > 0 => قد يكون هناك امتصاص قوي
+‎    # يمكنك تحويلها لقيم منطقية أو ألوان عند الرسم
+
+    return df
+
+# -----------------------------
+‎# مثال للاستخدام والرسم
+# -----------------------------
+if __name__ == "__main__":
+‎    # مثال بيانات عشوائية
+    np.random.seed(0)
+    dates = pd.date_range('2023-01-01', periods=200, freq='D')
+    df_test = pd.DataFrame({
+        'open'  : np.random.rand(200)*100,
+        'high'  : np.random.rand(200)*100,
+        'low'   : np.random.rand(200)*100,
+        'close' : np.random.rand(200)*100,
+        'volume': np.random.randint(100, 1000, size=200)
+    }, index=dates)
+
+‎    # نجعل high = max(open, high, close) و low = min(open, low, close) لضمان الاتساق
+    df_test['high'] = df_test[['open','high','close']].max(axis=1)
+    df_test['low']  = df_test[['open','low','close']].min(axis=1)
+
+‎    # استدعاء الدالة بالمدخلات الافتراضية
+    df_uv = ultimate_volume(
+        df_test,
+        plot_height=100,
+        money_volume=True,
+        aggregation="smoothed MA",
+        length=30,
+        vol_detect_len=150,
+        signal_len=9,
+        supply_threshold=2.5,
+        separate_AD_MAs=True,
+        AD_ma_scale=4,
+        AD_weight=0.0
+    )
+
+‎    # عرض بعض الأعمدة الرئيسية
+    print(df_uv[['volume_raw','volume_final','AD_portion','AD_agg','AD_plot','acc_agg','dist_agg','high_vol','low_vol','supply_demand']].head(20))
+
+‎    # رسم سريع لخط AD_plot مثلًا
+    plt.figure(figsize=(12,6))
+    plt.plot(df_uv.index, df_uv['AD_plot'], label='UV [cI8DH] - AD_plot')
+    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    plt.title("Ultimate Volume (AD_plot)")
+    plt.legend()
+    plt.show()
