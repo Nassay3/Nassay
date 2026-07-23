@@ -12,14 +12,14 @@ export default function Terminal() {
         <ResizablePanelGroup direction="horizontal">
 
           {/* Center - Chart */}
-          <ResizablePanel defaultSize={75} className="flex flex-col">
+          <ResizablePanel defaultSize={78} minSize={55} className="flex flex-col">
             <ChartPanel />
           </ResizablePanel>
 
           <ResizableHandle className="hidden lg:flex w-[1px] bg-[#161616] hover:bg-[#2962ff] transition-colors" />
 
           {/* Right Sidebar - OrderBook & Trades */}
-          <ResizablePanel defaultSize={25} minSize={15} maxSize={35} className="border-l border-[#161616] bg-[#080808] hidden lg:flex flex-col">
+          <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="border-l border-[#252832] bg-[#101116] hidden lg:flex flex-col">
             <ResizablePanelGroup direction="vertical">
               <ResizablePanel defaultSize={60} minSize={30}>
                 <OrderBook />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTradingStore } from '@/context/TradingContext';
 import { formatNumber } from '@/lib/format';
 import { format } from 'date-fns';
@@ -7,24 +7,34 @@ import { wsManager } from '@/lib/ws';
 export default function RecentTrades() {
   const { activeSymbol } = useTradingStore();
   const [trades, setTrades] = useState<any[]>([]);
+  const tradeBuffer = useRef<any[]>([]);
+  const frame = useRef<number | null>(null);
 
   useEffect(() => {
     setTrades([]);
+    tradeBuffer.current = [];
     const unsubscribe = wsManager.onMessage((msg) => {
       if (msg.e === 'aggTrade' && msg.s === activeSymbol) {
-        setTrades(prev => {
-          const next = [{
-            id: msg.a || Math.random().toString(),
-            price: msg.p,
-            quantity: msg.q,
-            time: msg.T,
-            isBuyerMaker: msg.m
-          }, ...prev];
-          return next.slice(0, 30);
+        tradeBuffer.current.unshift({
+          id: msg.a || `${msg.T}-${msg.p}`,
+          price: msg.p,
+          quantity: msg.q,
+          time: msg.T,
+          isBuyerMaker: msg.m,
         });
+        tradeBuffer.current = tradeBuffer.current.slice(0, 30);
+        if (frame.current === null) {
+          frame.current = window.requestAnimationFrame(() => {
+            frame.current = null;
+            setTrades([...tradeBuffer.current]);
+          });
+        }
       }
     });
-    return () => { unsubscribe(); };
+    return () => {
+      unsubscribe();
+      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+    };
   }, [activeSymbol]);
 
   return (

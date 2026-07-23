@@ -10,11 +10,134 @@ import {
   Get24hrTickerQueryParams,
   Get24hrTickerResponse,
 } from "@workspace/api-zod";
-import { fetchHistoricalKlines } from "../lib/binanceVision";
-import { calculateVwapIndicators } from "../lib/vwapIndicators";
+import { fetchChartWindow, fetchHistoricalKlines, fetchHistoricalWindow, intervalToMs } from "../lib/binanceVision";
+import {
+  calculateVwapIndicators,
+  getRequiredDashboardIntervals,
+  getRequiredVwmaMtfDefinitions,
+  trimVwapIndicators,
+  type Candle,
+  type MtfCandleSources,
+} from "../lib/vwapIndicators";
 
 const router: IRouter = Router();
-const BINANCE_API = "https://api.binance.us";
+const BINANCE_API = "https://data-api.binance.vision";
+
+function aggregateCandles(candles: Candle[], targetIntervalMs: number): Candle[] {
+  const buckets = new Map<number, Candle>();
+  for (const candle of candles) {
+    const bucketOpen = Math.floor(candle.openTime / targetIntervalMs) * targetIntervalMs;
+    const existing = buckets.get(bucketOpen);
+    if (!existing) {
+      buckets.set(bucketOpen, {
+        ...candle,
+        openTime: bucketOpen,
+        closeTime: bucketOpen + targetIntervalMs - 1,
+      });
+      continue;
+    }
+    existing.high = String(Math.max(Number(existing.high), Number(candle.high)));
+    existing.low = String(Math.min(Number(existing.low), Number(candle.low)));
+    existing.close = candle.close;
+    existing.volume = String(Number(existing.volume) + Number(candle.volume));
+    existing.quoteVolume = String(Number(existing.quoteVolume) + Number(candle.quoteVolume));
+    existing.trades += candle.trades;
+    existing.takerBuyBaseVolume = String(Number(existing.takerBuyBaseVolume) + Number(candle.takerBuyBaseVolume));
+    existing.takerBuyQuoteVolume = String(Number(existing.takerBuyQuoteVolume) + Number(candle.takerBuyQuoteVolume));
+  }
+  const aggregated = [...buckets.values()].sort((a, b) => a.openTime - b.openTime);
+  if (aggregated.length && candles[0]?.openTime !== aggregated[0].openTime) aggregated.shift();
+  return aggregated;
+}
+
+async function fetchVwmaMtfSources(
+  symbol: string,
+  interval: string,
+  endTime: number,
+): Promise<MtfCandleSources> {
+  const definitions = getRequiredVwmaMtfDefinitions(interval);
+  const entries = await Promise.all(definitions.map(async (definition) => {
+    const maximumPeriod = Math.max(...definition.periods);
+    if (definition.interval === "45m") {
+      const base = await fetchHistoricalWindow(symbol, "15m", maximumPeriod * 3 + 6, endTime);
+      return [definition.interval, aggregateCandles(base, 45 * 60_000)] as const;
+    }
+    const series = await fetchHistoricalWindow(symbol, definition.interval, maximumPeriod + 4, endTime);
+    return [definition.interval, series] as const;
+  }));
+  return Object.fromEntries(entries);
+}
+
+const dashboardSourceCache = new Map<string, { endTime: number; promise: Promise<MtfCandleSources> }>();
+
+async function fetchDashboardSources(symbol: string, endTime: number): Promise<MtfCandleSources> {
+  const cached = dashboardSourceCache.get(symbol);
+  // A chart refresh should reuse the same dashboard snapshot; the HTTP response itself
+  // is allowed to stay stale for 60 seconds and the ten fixed-frame reads are expensive.
+  if (cached && Math.abs(endTime - cached.endTime) < 60_000) return cached.promise;
+  const promise = Promise.all(getRequiredDashboardIntervals().map(async (sourceInterval) => {
+    const series = await fetchChartWindow(symbol, sourceInterval, 1_900, endTime);
+    return [sourceInterval, series] as const;
+  })).then((entries) => Object.fromEntries(entries));
+  dashboardSourceCache.set(symbol, { endTime, promise });
+  if (dashboardSourceCache.size > 8) dashboardSourceCache.delete(dashboardSourceCache.keys().next().value!);
+  try {
+    return await promise;
+  } catch (error) {
+    if (dashboardSourceCache.get(symbol)?.promise === promise) dashboardSourceCache.delete(symbol);
+    throw error;
+  }
+}
+
+router.get("/market/chart", async (req, res): Promise<void> => {
+  const symbol = String(req.query.symbol ?? "BTCUSDT").toUpperCase();
+  const interval = String(req.query.interval ?? "1h");
+  const limit = Math.max(2, Math.min(Number(req.query.limit) || 4_000, 8_000));
+  const requestedEnd = Number(req.query.endTime) || Date.now();
+  const barMs = intervalToMs(interval);
+  const weekWarmup = Math.ceil((8 * 86_400_000) / barMs);
+  const warmupBars = Math.max(1_000, weekWarmup);
+  const startedAt = performance.now();
+
+  try {
+    const [source, mtfSources, dashboardSources] = await Promise.all([
+      fetchChartWindow(symbol, interval, limit + warmupBars, requestedEnd),
+      fetchVwmaMtfSources(symbol, interval, requestedEnd),
+      fetchDashboardSources(symbol, requestedEnd),
+    ]);
+    if (!source.length) {
+      res.status(502).json({ error: "No market data returned" });
+      return;
+    }
+
+    const requested = source.slice(-limit);
+    const calculationStartedAt = performance.now();
+    const calculated = calculateVwapIndicators(source, symbol, interval, { ...mtfSources, ...dashboardSources });
+    const indicators = trimVwapIndicators(calculated, requested[0].openTime);
+    const finishedAt = performance.now();
+
+    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
+    res.setHeader(
+      "Server-Timing",
+      `fetch;dur=${(calculationStartedAt - startedAt).toFixed(1)}, calculate;dur=${(finishedAt - calculationStartedAt).toFixed(1)}`,
+    );
+    res.json({
+      symbol,
+      interval,
+      candles: requested,
+      indicators,
+      hasMore: source.length >= limit + Math.min(warmupBars, 1_000),
+      nextEndTime: requested[0].openTime - 1,
+      timing: {
+        fetchMs: Math.round(calculationStartedAt - startedAt),
+        calculateMs: Math.round(finishedAt - calculationStartedAt),
+      },
+    });
+  } catch (err) {
+    logger.error({ err, symbol, interval }, "Failed to build chart page");
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
 
 async function binanceFetch<T>(path: string, params: Record<string, string | number | undefined>): Promise<T> {
   const searchParams = new URLSearchParams();

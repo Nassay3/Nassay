@@ -2,15 +2,20 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "./logger";
 
-const BINANCE_WS = "wss://stream.binance.us:9443/ws";
+const BINANCE_WS = "wss://data-stream.binance.vision:443/ws";
 
-interface ClientState {
-  symbol: string;
+export interface SecondKlineAggregationState {
   interval: string;
+  secondBucketOpen: number | null;
+  secondKlines: Map<number, BinanceKlineMessage["k"]>;
+}
+
+interface ClientState extends SecondKlineAggregationState {
+  symbol: string;
   ws: WebSocket;
 }
 
-interface BinanceKlineMessage {
+export interface BinanceKlineMessage {
   e: string;
   E: number;
   s: string;
@@ -85,7 +90,11 @@ export class BinanceWebSocketBridge {
         if (msg.type === "subscribe") {
           const symbol = (msg.symbol as string).toLowerCase();
           const interval = (msg.interval as string) || "1m";
-          this.clients.set(ws, { symbol, interval, ws });
+          this.clients.set(ws, {
+            symbol, interval, ws,
+            secondBucketOpen: null,
+            secondKlines: new Map(),
+          });
           this.updateSubscriptions(symbol, interval);
         }
       } catch (err) {
@@ -102,11 +111,13 @@ export class BinanceWebSocketBridge {
   }
 
   private updateSubscriptions(symbol: string, interval: string) {
+    const nativeKlineIntervals = new Set([
+      "1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M",
+    ]);
+    const secondsSource = ["5s", "15s", "30s"].includes(interval) ? "1s" : interval;
     const streams = [
-      `${symbol}@kline_${interval}`,
-      `${symbol}@depth`,
-      `${symbol}@aggTrade`,
-      `${symbol}@ticker`,
+      ...(nativeKlineIntervals.has(secondsSource) ? [`${symbol}@kline_${secondsSource}`] : []),
+      `${symbol}@depth`, `${symbol}@aggTrade`, `${symbol}@ticker`,
     ];
     for (const stream of streams) {
       if (!this.subscribedStreams.has(stream) && !this.pendingSubscriptions.has(stream)) {
@@ -168,17 +179,72 @@ export class BinanceWebSocketBridge {
 
   private broadcast(msg: BinanceKlineMessage | BinanceDepthMessage | BinanceTradeMessage | BinanceTickerMessage | any) {
     if (!this.server) return;
-    const payload = JSON.stringify(msg);
     for (const [ws, state] of this.clients) {
       if (ws.readyState !== WebSocket.OPEN) continue;
+      if (msg.e === "kline" && msg.k?.i === "1s" && ["5s", "15s", "30s"].includes(state.interval)) {
+        const aggregated = aggregateOneSecondKlineUpdate(msg, state);
+        if (aggregated) ws.send(JSON.stringify(aggregated));
+        continue;
+      }
       if (!this.matchesClient(msg, state)) continue;
-      ws.send(payload);
+      ws.send(JSON.stringify(msg));
     }
   }
 
   private matchesClient(msg: any, state: ClientState): boolean {
     const s = msg.s?.toLowerCase() || msg.S?.toLowerCase() || "";
     if (!s) return false;
-    return s === state.symbol;
+    if (s !== state.symbol) return false;
+    if (msg.e === "kline") return msg.k?.i === state.interval;
+    return true;
   }
+}
+
+export function aggregateOneSecondKlineUpdate(
+  message: BinanceKlineMessage,
+  state: SecondKlineAggregationState,
+): BinanceKlineMessage | null {
+  const targetMs = Number.parseInt(state.interval, 10) * 1_000;
+  if (!Number.isFinite(targetMs) || targetMs <= 1_000) return null;
+  const bucketOpen = Math.floor(message.k.t / targetMs) * targetMs;
+  if (state.secondBucketOpen !== bucketOpen) {
+    state.secondBucketOpen = bucketOpen;
+    state.secondKlines.clear();
+  }
+  // Binance may update the same 1s candle more than once. Replacement by
+  // open-time prevents volume/trade double counting.
+  state.secondKlines.set(message.k.t, message.k);
+  const source = [...state.secondKlines.values()].sort((a, b) => a.t - b.t);
+  return aggregateOneSecondKlineMessages(source, state.interval, message);
+}
+
+export function aggregateOneSecondKlineMessages(
+  source: BinanceKlineMessage["k"][],
+  interval: string,
+  envelope: BinanceKlineMessage,
+): BinanceKlineMessage | null {
+  if (!source.length) return null;
+  const targetMs = Number.parseInt(interval, 10) * 1_000;
+  if (!Number.isFinite(targetMs) || targetMs <= 1_000) return null;
+  const bucketOpen = Math.floor(source[0].t / targetMs) * targetMs;
+  const first = source[0];
+  const last = source[source.length - 1];
+  const sum = (field: "v" | "q") => source.reduce((total, kline) => total + Number(kline[field]), 0);
+  return {
+    ...envelope,
+    k: {
+      ...last,
+      t: bucketOpen,
+      T: bucketOpen + targetMs - 1,
+      i: interval,
+      o: first.o,
+      h: String(Math.max(...source.map((kline) => Number(kline.h)))),
+      l: String(Math.min(...source.map((kline) => Number(kline.l)))),
+      c: last.c,
+      v: String(sum("v")),
+      q: String(sum("q")),
+      n: source.reduce((total, kline) => total + kline.n, 0),
+      x: last.x && last.t + 1_000 >= bucketOpen + targetMs,
+    },
+  };
 }

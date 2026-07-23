@@ -30,6 +30,7 @@ const FREE_MODELS = [
 ];
 
 router.get("/openrouter/models", async (_req, res) => {
+  if (!openrouter) { res.status(503).json({ ok: false, error: "AI chat is not configured" }); return; }
   try {
     const response = await openrouter.models.list();
     const modelIds = response.data
@@ -50,6 +51,7 @@ router.get("/openrouter/models", async (_req, res) => {
 });
 
 router.post("/openrouter/chat", async (req, res) => {
+  if (!openrouter) { res.status(503).json({ ok: false, error: "AI chat is not configured" }); return; }
   const model = req.body?.model || "openai/gpt-4o-mini";
   const message = req.body?.message || "Say hello and confirm you are working.";
   try {
@@ -72,12 +74,14 @@ router.post("/openrouter/chat", async (req, res) => {
 });
 
 router.get("/openrouter/benchmark", async (_req, res) => {
+  if (!openrouter) { res.status(503).json({ ok: false, error: "AI chat is not configured" }); return; }
+  const client = openrouter;
   const prompt = `Answer only with a single digit (no explanation): What is 18 + 23?`;
   const results = await Promise.all(
     FREE_MODELS.map(async (model) => {
       const start = Date.now();
       try {
-        const completion = await openrouter.chat.completions.create({
+        const completion = await client.chat.completions.create({
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
@@ -112,6 +116,7 @@ router.get("/openrouter/benchmark", async (_req, res) => {
 });
 
 router.get("/openrouter/usage", async (_req, res) => {
+  if (!process.env["OPENROUTER_API_KEY"]) { res.status(503).json({ ok: false, error: "AI chat is not configured" }); return; }
   try {
     const response = await fetch("https://openrouter.ai/api/v1/auth/key", {
       headers: { Authorization: `Bearer ${process.env["OPENROUTER_API_KEY"]}` },

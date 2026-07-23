@@ -1,51 +1,51 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTradingStore } from '@/context/TradingContext';
 import { formatNumber } from '@/lib/format';
 import { wsManager } from '@/lib/ws';
 
 export default function OrderBook() {
   const { activeSymbol } = useTradingStore();
-  const [asksMap, setAsksMap] = useState<Map<string, string>>(new Map());
-  const [bidsMap, setBidsMap] = useState<Map<string, string>>(new Map());
+  const asksMap = useRef<Map<string, string>>(new Map());
+  const bidsMap = useRef<Map<string, string>>(new Map());
+  const frame = useRef<number | null>(null);
+  const [, renderBook] = useState(0);
 
   useEffect(() => {
-    setAsksMap(new Map());
-    setBidsMap(new Map());
+    asksMap.current.clear();
+    bidsMap.current.clear();
+    renderBook((value) => value + 1);
 
     const unsubscribe = wsManager.onMessage((msg) => {
       if (msg.e === 'depthUpdate' && msg.s === activeSymbol) {
-        setAsksMap(prev => {
-          const next = new Map(prev);
-          if (msg.a) {
-            msg.a.forEach(([price, qty]: [string, string]) => {
-              if (parseFloat(qty) === 0) next.delete(price);
-              else next.set(price, qty);
-            });
-          }
-          return next;
+        msg.a?.forEach(([price, qty]: [string, string]) => {
+          if (parseFloat(qty) === 0) asksMap.current.delete(price);
+          else asksMap.current.set(price, qty);
         });
-        setBidsMap(prev => {
-          const next = new Map(prev);
-          if (msg.b) {
-            msg.b.forEach(([price, qty]: [string, string]) => {
-              if (parseFloat(qty) === 0) next.delete(price);
-              else next.set(price, qty);
-            });
-          }
-          return next;
+        msg.b?.forEach(([price, qty]: [string, string]) => {
+          if (parseFloat(qty) === 0) bidsMap.current.delete(price);
+          else bidsMap.current.set(price, qty);
         });
+        if (frame.current === null) {
+          frame.current = window.requestAnimationFrame(() => {
+            frame.current = null;
+            renderBook((value) => value + 1);
+          });
+        }
       }
     });
-    return () => { unsubscribe(); };
+    return () => {
+      unsubscribe();
+      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+    };
   }, [activeSymbol]);
 
-  const asks = Array.from(asksMap.entries())
+  const asks = Array.from(asksMap.current.entries())
     .map(([price, qty]) => ({ price, quantity: qty }))
     .sort((a, b) => parseFloat(a.price) - parseFloat(b.price))
     .slice(0, 15)
     .reverse();
 
-  const bids = Array.from(bidsMap.entries())
+  const bids = Array.from(bidsMap.current.entries())
     .map(([price, qty]) => ({ price, quantity: qty }))
     .sort((a, b) => parseFloat(b.price) - parseFloat(a.price))
     .slice(0, 15);
@@ -60,11 +60,11 @@ export default function OrderBook() {
       <div className="flex-1 overflow-auto p-1 flex flex-col justify-center gap-1">
         {/* Asks */}
         <div className="flex flex-col gap-0.5 justify-end flex-1 min-h-0">
-          {asks.map((ask, i) => {
+          {asks.map((ask) => {
             const total = parseFloat(ask.price) * parseFloat(ask.quantity);
             const depth = Math.min(100, (parseFloat(ask.quantity) / 2) * 100); 
             return (
-              <div key={`ask-${i}`} className="relative flex justify-between px-1 hover:bg-muted/50 cursor-pointer group">
+              <div key={`ask-${ask.price}`} className="relative flex justify-between px-1 hover:bg-muted/50 cursor-pointer group">
                 <div className="absolute top-0 right-0 h-full bg-danger/10 z-0" style={{ width: `${depth}%` }} />
                 <span className="text-danger z-10 w-1/3 text-left">{formatNumber(ask.price, 2)}</span>
                 <span className="text-foreground z-10 w-1/3 text-right">{formatNumber(ask.quantity, 4)}</span>
@@ -81,11 +81,11 @@ export default function OrderBook() {
 
         {/* Bids */}
         <div className="flex flex-col gap-0.5 justify-start flex-1 min-h-0">
-          {bids.map((bid, i) => {
+          {bids.map((bid) => {
             const total = parseFloat(bid.price) * parseFloat(bid.quantity);
             const depth = Math.min(100, (parseFloat(bid.quantity) / 2) * 100);
             return (
-              <div key={`bid-${i}`} className="relative flex justify-between px-1 hover:bg-muted/50 cursor-pointer group">
+              <div key={`bid-${bid.price}`} className="relative flex justify-between px-1 hover:bg-muted/50 cursor-pointer group">
                 <div className="absolute top-0 right-0 h-full bg-success/10 z-0" style={{ width: `${depth}%` }} />
                 <span className="text-success z-10 w-1/3 text-left">{formatNumber(bid.price, 2)}</span>
                 <span className="text-foreground z-10 w-1/3 text-right">{formatNumber(bid.quantity, 4)}</span>

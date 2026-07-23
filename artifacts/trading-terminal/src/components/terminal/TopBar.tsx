@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useTradingStore } from '@/context/TradingContext';
 import { useGet24hrTicker, getGet24hrTickerQueryKey } from '@workspace/api-client-react';
 import { formatNumber, formatVolume } from '@/lib/format';
 import { RefreshCw, ChevronDown, Activity, TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { wsManager } from '@/lib/ws';
-import SymbolPicker from './SymbolPicker';
-import ChatPanel from './ChatPanel';
+
+const SymbolPicker = lazy(() => import('./SymbolPicker'));
+const ChatPanel = lazy(() => import('./ChatPanel'));
 
 export default function TopBar() {
   const { activeSymbol } = useTradingStore();
@@ -48,12 +49,12 @@ export default function TopBar() {
   const baseSymbol = activeSymbol.replace('USDT', '');
 
   return (
-    <div className="flex h-14 items-center justify-between border-b border-[#161616] bg-[#080808] px-3 text-sm shrink-0 select-none">
+    <div className="flex h-12 items-center justify-between border-b border-[#252832] bg-[#101116] px-2.5 text-sm shrink-0 select-none shadow-[0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex items-center gap-4">
         {/* Symbol selector */}
         <button
           onClick={() => setPickerOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#111111] border border-[#222] hover:border-[#333] hover:bg-[#151515] transition-all group"
+          className="flex h-8 items-center gap-2 px-2.5 rounded-md bg-[#191b22] border border-[#2b2e38] hover:border-[#4a4e5d] hover:bg-[#20232b] transition-colors group"
         >
           <div className="flex items-baseline gap-1">
             <span className="text-base font-bold text-foreground tracking-tight">{baseSymbol}</span>
@@ -134,8 +135,10 @@ export default function TopBar() {
         </Button>
       </div>
 
-      <SymbolPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
-      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+      <Suspense fallback={null}>
+        {pickerOpen && <SymbolPicker open onClose={() => setPickerOpen(false)} />}
+        {chatOpen && <ChatPanel open onClose={() => setChatOpen(false)} />}
+      </Suspense>
     </div>
   );
 }
