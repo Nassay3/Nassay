@@ -15,6 +15,8 @@ export * from './intervalParam';
 export * from './klineCandle';
 export * from './klineResponse';
 export * from './listSymbolsParams';
+export * from './marketType';
+export * from './marketTypeParamParameter';
 export * from './symbolInfo';
 export * from './symbolListResponse';
 export * from './symbolParam';

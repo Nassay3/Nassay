@@ -5,6 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type MarketType = typeof MarketType[keyof typeof MarketType];
+
+
+export const MarketType = {
+  spot: 'spot',
+  futures: 'futures',
+} as const;
+
 export interface HealthStatus {
   status: string;
 }
@@ -171,23 +179,41 @@ export interface VwapResponse {
   zScore?: VwapLine[];
 }
 
+export type MarketTypeParamParameter = MarketType;
+
 export type ListSymbolsParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 quote?: string;
 };
 
 export type GetHistoryParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 symbol: SymbolParam;
 interval?: IntervalParam;
 days?: DaysParam;
 };
 
 export type GetVwapParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 symbol: SymbolParam;
 interval?: IntervalParam;
 days?: DaysParam;
 };
 
 export type Get24hrTickerParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 symbol?: SymbolParam;
 };
 

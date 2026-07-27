@@ -1,19 +1,20 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useTradingStore } from '@/context/TradingContext';
 import { useGet24hrTicker, getGet24hrTickerQueryKey } from '@workspace/api-client-react';
 import { formatNumber, formatVolume } from '@/lib/format';
 import { RefreshCw, ChevronDown, Activity, TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { wsManager } from '@/lib/ws';
-import SymbolPicker from './SymbolPicker';
-import ChatPanel from './ChatPanel';
+
+const SymbolPicker = lazy(() => import('./SymbolPicker'));
+const ChatPanel = lazy(() => import('./ChatPanel'));
 
 export default function TopBar() {
-  const { activeSymbol } = useTradingStore();
+  const { activeSymbol, marketType, setMarketType } = useTradingStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
 
-  const tickerParams = { symbol: activeSymbol };
+  const tickerParams = { symbol: activeSymbol, market: marketType };
   const { data, refetch, isFetching } = useGet24hrTicker(
     tickerParams,
     { query: { queryKey: getGet24hrTickerQueryKey(tickerParams), refetchInterval: 60000 } }
@@ -23,7 +24,7 @@ export default function TopBar() {
 
   useEffect(() => {
     setLiveTicker(null);
-  }, [activeSymbol]);
+  }, [activeSymbol, marketType]);
 
   useEffect(() => {
     const unsubscribe = wsManager.onMessage((msg) => {
@@ -32,7 +33,7 @@ export default function TopBar() {
       }
     });
     return () => { unsubscribe(); };
-  }, [activeSymbol]);
+  }, [activeSymbol, marketType]);
 
   const httpTicker = data?.tickers?.[0];
   const ticker = liveTicker ? {
@@ -48,12 +49,29 @@ export default function TopBar() {
   const baseSymbol = activeSymbol.replace('USDT', '');
 
   return (
-    <div className="flex h-14 items-center justify-between border-b border-[#161616] bg-[#080808] px-3 text-sm shrink-0 select-none">
+    <div className="flex h-12 items-center justify-between border-b border-[#252832] bg-[#101116] px-2.5 text-sm shrink-0 select-none shadow-[0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex items-center gap-4">
+        <div className="flex h-8 shrink-0 items-center rounded-md border border-[#2b2e38] bg-[#15171d] p-0.5">
+          {(['spot', 'futures'] as const).map((market) => (
+            <button
+              key={market}
+              onClick={() => setMarketType(market)}
+              className={`h-6 rounded px-2 text-[10px] font-semibold uppercase transition-colors ${
+                marketType === market
+                  ? 'bg-[#f0b90b] text-[#121318] shadow-sm'
+                  : 'text-[#737b8a] hover:bg-[#222630] hover:text-white'
+              }`}
+              title={market === 'spot' ? 'Binance Global Spot' : 'Binance Global USD-M Futures'}
+            >
+              {market === 'spot' ? 'Spot' : 'Futures'}
+            </button>
+          ))}
+        </div>
+
         {/* Symbol selector */}
         <button
           onClick={() => setPickerOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#111111] border border-[#222] hover:border-[#333] hover:bg-[#151515] transition-all group"
+          className="flex h-8 items-center gap-2 px-2.5 rounded-md bg-[#191b22] border border-[#2b2e38] hover:border-[#4a4e5d] hover:bg-[#20232b] transition-colors group"
         >
           <div className="flex items-baseline gap-1">
             <span className="text-base font-bold text-foreground tracking-tight">{baseSymbol}</span>
@@ -107,6 +125,9 @@ export default function TopBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <span className="hidden xl:inline text-[9px] font-semibold uppercase tracking-wider text-[#6f7785]">
+          Binance Global · {marketType === 'spot' ? 'Spot' : 'USD‑M'}
+        </span>
         <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0d0d0d] border border-[#1a1a1a]">
           <Activity size={12} className={liveTicker ? 'text-[#0ecb81]' : 'text-[#555]'} />
           <span className="text-[10px] text-[#666] font-medium uppercase">
@@ -134,8 +155,10 @@ export default function TopBar() {
         </Button>
       </div>
 
-      <SymbolPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />
-      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+      <Suspense fallback={null}>
+        {pickerOpen && <SymbolPicker open onClose={() => setPickerOpen(false)} />}
+        {chatOpen && <ChatPanel open onClose={() => setChatOpen(false)} />}
+      </Suspense>
     </div>
   );
 }

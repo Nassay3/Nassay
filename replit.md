@@ -4,12 +4,14 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Run & Operate
 
+- `pnpm dev` — run the API (port 5000) and trading terminal (port 5173) together
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Optional env: `OPENROUTER_API_KEY` — enables the AI chat panel; the market terminal runs without it
+- Optional env: `DATABASE_URL` — Postgres connection string for database features
 
 ## Stack
 

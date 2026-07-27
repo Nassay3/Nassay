@@ -5,13 +5,7 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
-}
+const rawPort = process.env.PORT ?? '5173';
 
 const port = Number(rawPort);
 
@@ -19,13 +13,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+const basePath = process.env.BASE_PATH ?? '/';
 
 export default defineConfig({
   base: basePath,
@@ -63,12 +51,27 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('lightweight-charts')) return 'charting';
+          if (id.includes('@radix-ui') || id.includes('lucide-react')) return 'ui-vendor';
+          if (id.includes('react') || id.includes('@tanstack') || id.includes('wouter')) return 'react-vendor';
+        },
+      },
+    },
   },
   server: {
     port,
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    proxy: {
+      '/api': {
+        target: process.env.API_ORIGIN ?? 'http://127.0.0.1:5000',
+        ws: true,
+      },
+    },
     fs: {
       strict: true,
     },
