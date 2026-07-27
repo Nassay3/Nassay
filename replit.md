@@ -1,47 +1,54 @@
-# [Project name]
+# Nassay trading terminal
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Nassay is a professional Binance Global charting terminal for Spot and USD-M perpetual Futures.
 
-## Run & Operate
+## Run and operate
 
-- `pnpm dev` — run the API (port 5000) and trading terminal (port 5173) together
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Optional env: `OPENROUTER_API_KEY` — enables the AI chat panel; the market terminal runs without it
-- Optional env: `DATABASE_URL` — Postgres connection string for database features
+- `python run.py` on Windows or `python3 run.py` on macOS/Linux: safely sync a clean `main`, prepare the private Node/pnpm runtime, install current dependencies, and start the complete app.
+- `pnpm dev`: run the API on port 5000 and terminal on port 5173.
+- `pnpm run typecheck`: full workspace typecheck.
+- `pnpm run build`: typecheck and build all packages.
+- `pnpm --filter @workspace/api-spec run codegen`: regenerate hooks and Zod schemas after OpenAPI changes.
+- Optional `OPENROUTER_API_KEY`: enables the AI chat panel; the market terminal works without it.
+- Optional `DATABASE_URL`: enables database-backed features.
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- React, Vite, and Lightweight Charts
+- Express 5 API
+- Zod/OpenAPI generated clients
+- Binance Global REST, archive, and WebSocket market data
 
-## Where things live
+## Repository map
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/trading-terminal`: React chart terminal.
+- `artifacts/api-server`: Express API, Binance data, and indicator calculations.
+- `lib/api-spec`: source OpenAPI contract.
+- `lib/api-client-react` and `lib/api-zod`: generated API clients and schemas.
+- `run.py`: cross-platform launcher and safe Git synchronization.
+- `AGENTS.md`: durable Codex repository instructions.
+- `PROJECT_STATUS.md`: current product state, decisions, and validation record.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `main` on `Nassay3/Nassay` is the only code source of truth.
+- `run.py` only auto-updates with a clean, non-diverged `main`.
+- Candle timestamps and visible ranges remain native to their selected timeframe.
+- User chart, layout, candle, market, and indicator preferences persist locally.
+- Lower panes have synchronized crosshairs and independent scale interaction.
 
-## Product
+## Product priorities
 
-_Describe the high-level user-facing capabilities of this app once they exist._
-
-## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- TradingView-like chart interaction.
+- Accurate higher-timeframe candles.
+- Professional independent indicator controls.
+- Stable draggable and resizable lower panes.
+- Reliable Binance Global Spot and USD-M Futures switching.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Do not edit concurrently on two devices. Publish one device before switching.
+- Do not put `.env`, `node_modules`, or `.runtime` in Git.
+- Do not restore removed Order Book, Recent Trades, main-chart volume, or `BEFORE ITS TOO LATE` without an explicit request.
+- Read `PROJECT_STATUS.md` before material changes.
