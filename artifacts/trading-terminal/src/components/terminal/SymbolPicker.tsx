@@ -10,22 +10,22 @@ interface SymbolPickerProps {
   onClose: () => void;
 }
 
-const LS_FAVORITES = 'terminal_favorite_symbols';
-const LS_RECENTS = 'terminal_recent_symbols';
+const favoritesStorageKey = (market: string) => `terminal_favorite_symbols:${market}`;
+const recentsStorageKey = (market: string) => `terminal_recent_symbols:${market}`;
 const MAX_RECENTS = 8;
 
 export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
-  const { activeSymbol, setActiveSymbol } = useTradingStore();
+  const { activeSymbol, setActiveSymbol, marketType } = useTradingStore();
   const [search, setSearch] = useState('');
   const [favorites, setFavorites] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_FAVORITES) || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(favoritesStorageKey(marketType)) || '[]'); } catch { return []; }
   });
   const [recents, setRecents] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_RECENTS) || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(recentsStorageKey(marketType)) || '[]'); } catch { return []; }
   });
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const symbolsParams = { quote: 'USDT' };
+  const symbolsParams = { quote: 'USDT', market: marketType };
   const { data: symbolsData, isLoading } = useListSymbols(
     symbolsParams,
     { query: { queryKey: getListSymbolsQueryKey(symbolsParams), enabled: open } }
@@ -43,10 +43,12 @@ export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
 
   useEffect(() => {
     if (open) {
+      try { setFavorites(JSON.parse(localStorage.getItem(favoritesStorageKey(marketType)) || '[]')); } catch { setFavorites([]); }
+      try { setRecents(JSON.parse(localStorage.getItem(recentsStorageKey(marketType)) || '[]')); } catch { setRecents([]); }
       setSearch('');
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [open]);
+  }, [open, marketType]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -62,7 +64,7 @@ export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
       ? favorites.filter(s => s !== sym)
       : [sym, ...favorites];
     setFavorites(next);
-    localStorage.setItem(LS_FAVORITES, JSON.stringify(next));
+    localStorage.setItem(favoritesStorageKey(marketType), JSON.stringify(next));
   };
 
   const selectSymbol = (sym: string) => {
@@ -70,7 +72,7 @@ export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
     setActiveSymbol(sym);
     const next = [sym, ...recents.filter(s => s !== sym)].slice(0, MAX_RECENTS);
     setRecents(next);
-    localStorage.setItem(LS_RECENTS, JSON.stringify(next));
+    localStorage.setItem(recentsStorageKey(marketType), JSON.stringify(next));
     onClose();
   };
 
@@ -91,7 +93,9 @@ export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
             <div className="p-1.5 rounded-md bg-[#2962ff]/10">
               <TrendingUp size={14} className="text-[#2962ff]" />
             </div>
-            <span className="text-sm font-semibold text-foreground tracking-tight">Select Symbol</span>
+            <span className="text-sm font-semibold text-foreground tracking-tight">
+              Binance Global {marketType === 'spot' ? 'Spot' : 'USD‑M Futures'}
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -173,7 +177,7 @@ export default function SymbolPicker({ open, onClose }: SymbolPickerProps) {
         {/* Footer */}
         <div className="px-4 py-2 border-t border-[#161616] bg-[#0d0d0d] text-[10px] text-[#555] flex items-center justify-between">
           <span>{allSymbols.length} USDT pairs available</span>
-          <span className="text-[#2962ff]">Binance US</span>
+          <span className="text-[#f0b90b]">Binance Global · {marketType === 'spot' ? 'Spot' : 'USD‑M Futures'}</span>
         </div>
       </div>
     </div>

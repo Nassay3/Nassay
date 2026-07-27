@@ -50,36 +50,6 @@ export interface IntegratedDashboardRow {
   signal: -1 | 0 | 1 | null;
 }
 
-export interface BeforeItsTooLateLevel {
-  key: "a2Top" | "a2" | "a1Top" | "a1" | "am1Top" | "am1" | "am2Top" | "am2";
-  value: number;
-  color: string;
-  visible: boolean;
-}
-
-export interface BeforeItsTooLateLine extends VwapLine {
-  period: number;
-  visible: boolean;
-  pointMarkersVisible: boolean;
-}
-
-export interface BeforeItsTooLateIndicator {
-  sourceTitle: "WBORSA";
-  shortTitle: "BEFORE ITS TOO LATE";
-  levels: BeforeItsTooLateLevel[];
-  lines: BeforeItsTooLateLine[];
-  visibility: {
-    ticks: true;
-    seconds: [1, 59];
-    minutes: [1, 59];
-    hours: [1, 24];
-    days: [1, 366];
-    weeks: [1, 52];
-    months: [1, 12];
-    ranges: true;
-  };
-}
-
 export interface VwapIndicators {
   symbol: string;
   interval: string;
@@ -105,7 +75,6 @@ export interface VwapIndicators {
   vwapUltra1: VwapLine[];
   vwmaMtfMap: VwapLine[];
   zScore: VwapLine[];
-  beforeItsTooLate: BeforeItsTooLateIndicator;
   combinedSignal: VwapLine;
   integratedDashboard: { rows: IntegratedDashboardRow[] };
 }
@@ -261,61 +230,6 @@ export function calculatePineVwapZScore(candles: Candle[], period: number): (num
     if (mean === null || value === null || value <= 0) return null;
     return (parseFloat(candle.close) - mean) / Math.sqrt(value);
   });
-}
-
-/**
- * Exact port of the active TradingView study whose source title is WBORSA and
- * short title is "BEFORE ITS TOO LATE".  These are the instance values read
- * from the chart on 2026-07-23; they intentionally differ from the old Pine
- * defaults embedded in the saved source.
- */
-export function calculateBeforeItsTooLate(candles: Candle[]): BeforeItsTooLateIndicator {
-  const times = candles.map((candle) => candle.openTime);
-  const definitions = [
-    { period: 21,   color: "#9598a1", visible: false, pointMarkersVisible: false },
-    { period: 48,   color: "#089981", visible: true,  pointMarkersVisible: true  },
-    { period: 84,   color: "#ff9800", visible: true,  pointMarkersVisible: true  },
-    { period: 175,  color: "#2962ff", visible: false, pointMarkersVisible: false },
-    { period: 1750, color: "#6b6d3a", visible: false, pointMarkersVisible: true  },
-    { period: 4800, color: "#9c27b0", visible: false, pointMarkersVisible: false },
-  ] as const;
-  const lines: BeforeItsTooLateLine[] = definitions.map((definition, index) => {
-    const values = calculatePineVwapZScore(candles, definition.period);
-    return {
-      name: `ZVWAP2-${index + 1}`,
-      period: definition.period,
-      color: definition.color,
-      visible: definition.visible,
-      pointMarkersVisible: definition.pointMarkersVisible,
-      values: times.map((time, valueIndex) => ({ time, value: values[valueIndex] })),
-    };
-  });
-
-  return {
-    sourceTitle: "WBORSA",
-    shortTitle: "BEFORE ITS TOO LATE",
-    levels: [
-      { key: "a2Top",  value: 2,      color: "#f23645", visible: true  },
-      { key: "a2",     value: 0,      color: "#9598a1", visible: true  },
-      { key: "a1Top",  value: 0.875,  color: "#ff9800", visible: true  },
-      { key: "a1",     value: -0.875, color: "#ff9800", visible: true  },
-      { key: "am1Top", value: -2,     color: "#f23645", visible: true  },
-      { key: "am1",    value: 3,      color: "#9598a1", visible: false },
-      { key: "am2Top", value: -1,     color: "#ff9800", visible: true  },
-      { key: "am2",    value: 1,      color: "#ff9800", visible: true  },
-    ],
-    lines,
-    visibility: {
-      ticks: true,
-      seconds: [1, 59],
-      minutes: [1, 59],
-      hours: [1, 24],
-      days: [1, 366],
-      weeks: [1, 52],
-      months: [1, 12],
-      ranges: true,
-    },
-  };
 }
 
 function rollingVwapFromClose(candles: Candle[], period: number): (number | null)[] {
@@ -823,7 +737,6 @@ export function calculateVwapIndicators(
 
   // ── Z-Score (periods 48 & 84) ────────────────────────────────────────────
   const zScore = calculateZScore(candles, times, [48, 84]);
-  const beforeItsTooLate = calculateBeforeItsTooLate(candles);
   const combinedSignal = calculateCombinedVwapSignal(candles, times);
   const integratedDashboard = calculateIntegratedDashboard(candles, interval, mtfSources);
 
@@ -839,7 +752,6 @@ export function calculateVwapIndicators(
     vwapUltra1,
     vwmaMtfMap,
     zScore,
-    beforeItsTooLate,
     combinedSignal,
     integratedDashboard,
   };

@@ -1,10 +1,12 @@
 export type WsMessageCallback = (msg: any) => void;
+type MarketType = 'spot' | 'futures';
 
 class WebSocketManager {
   private ws: WebSocket | null = null;
   private subscribers: Set<WsMessageCallback> = new Set();
   private currentSymbol: string = 'BTCUSDT';
   private currentInterval: string = '1h';
+  private currentMarket: MarketType = 'spot';
   private reconnectTimer: number | null = null;
 
   connect() {
@@ -19,7 +21,7 @@ class WebSocketManager {
         window.clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
-      this.subscribe(this.currentSymbol, this.currentInterval);
+      this.subscribe(this.currentSymbol, this.currentInterval, this.currentMarket);
     };
 
     this.ws.onmessage = (event) => {
@@ -35,18 +37,19 @@ class WebSocketManager {
     };
   }
 
-  subscribeToParams(symbol: string, interval: string) {
+  subscribeToParams(symbol: string, interval: string, market: MarketType) {
     this.currentSymbol = symbol;
     this.currentInterval = interval;
+    this.currentMarket = market;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.subscribe(symbol, interval);
+      this.subscribe(symbol, interval, market);
     } else {
       this.connect();
     }
   }
 
-  private subscribe(symbol: string, interval: string) {
-    this.ws?.send(JSON.stringify({ type: "subscribe", symbol, interval }));
+  private subscribe(symbol: string, interval: string, market: MarketType) {
+    this.ws?.send(JSON.stringify({ type: "subscribe", symbol, interval, market }));
   }
 
   onMessage(cb: WsMessageCallback) {

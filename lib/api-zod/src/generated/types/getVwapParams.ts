@@ -7,9 +7,15 @@
  */
 import type { DaysParam } from './daysParam';
 import type { IntervalParam } from './intervalParam';
+import type { MarketType } from './marketType';
+import type { MarketTypeParamParameter } from './marketTypeParamParameter';
 import type { SymbolParam } from './symbolParam';
 
 export type GetVwapParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 symbol: SymbolParam;
 interval?: IntervalParam;
 days?: DaysParam;

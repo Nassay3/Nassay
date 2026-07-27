@@ -2,7 +2,12 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "./logger";
 
-const BINANCE_WS = "wss://data-stream.binance.vision:443/ws";
+type BinanceMarket = "spot" | "futures";
+
+const BINANCE_WS: Record<BinanceMarket, string> = {
+  spot: "wss://data-stream.binance.vision:443/ws",
+  futures: "wss://fstream.binance.com/ws",
+};
 
 export interface SecondKlineAggregationState {
   interval: string;
@@ -12,6 +17,7 @@ export interface SecondKlineAggregationState {
 
 interface ClientState extends SecondKlineAggregationState {
   symbol: string;
+  market: BinanceMarket;
   ws: WebSocket;
 }
 
@@ -35,25 +41,6 @@ export interface BinanceKlineMessage {
   };
 }
 
-interface BinanceDepthMessage {
-  e: string;
-  E: number;
-  s: string;
-  u: number;
-  b: Array<[string, string]>;
-  a: Array<[string, string]>;
-}
-
-interface BinanceTradeMessage {
-  e: string;
-  E: number;
-  s: string;
-  p: string;
-  q: string;
-  T: number;
-  m: boolean;
-}
-
 interface BinanceTickerMessage {
   e: string;
   E: number;
@@ -70,16 +57,22 @@ interface BinanceTickerMessage {
 export class BinanceWebSocketBridge {
   private server: WebSocketServer | null = null;
   private clients = new Map<WebSocket, ClientState>();
-  private binanceWs: WebSocket | null = null;
-  private subscribedStreams = new Set<string>();
-  private pendingSubscriptions = new Set<string>();
-  private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
+  private upstreams: Record<BinanceMarket, {
+    ws: WebSocket | null;
+    subscribedStreams: Set<string>;
+    pendingSubscriptions: Set<string>;
+    reconnectDelay: number;
+  }> = {
+    spot: { ws: null, subscribedStreams: new Set(), pendingSubscriptions: new Set(), reconnectDelay: 1000 },
+    futures: { ws: null, subscribedStreams: new Set(), pendingSubscriptions: new Set(), reconnectDelay: 1000 },
+  };
 
   constructor(httpServer: Server) {
     this.server = new WebSocketServer({ server: httpServer, path: "/api/ws" });
     this.server.on("connection", (ws) => this.handleClient(ws));
-    this.connectBinance();
+    this.connectBinance("spot");
+    this.connectBinance("futures");
   }
 
   private handleClient(ws: WebSocket) {
@@ -90,12 +83,13 @@ export class BinanceWebSocketBridge {
         if (msg.type === "subscribe") {
           const symbol = (msg.symbol as string).toLowerCase();
           const interval = (msg.interval as string) || "1m";
+          const market: BinanceMarket = msg.market === "futures" ? "futures" : "spot";
           this.clients.set(ws, {
-            symbol, interval, ws,
+            symbol, interval, market, ws,
             secondBucketOpen: null,
             secondKlines: new Map(),
           });
-          this.updateSubscriptions(symbol, interval);
+          this.updateSubscriptions(symbol, interval, market);
         }
       } catch (err) {
         logger.error({ err }, "Failed to parse client message");
@@ -110,77 +104,82 @@ export class BinanceWebSocketBridge {
     });
   }
 
-  private updateSubscriptions(symbol: string, interval: string) {
+  private updateSubscriptions(symbol: string, interval: string, market: BinanceMarket) {
     const nativeKlineIntervals = new Set([
       "1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M",
     ]);
-    const secondsSource = ["5s", "15s", "30s"].includes(interval) ? "1s" : interval;
+    const secondsSource = market === "spot" && ["5s", "15s", "30s"].includes(interval) ? "1s" : interval;
     const streams = [
       ...(nativeKlineIntervals.has(secondsSource) ? [`${symbol}@kline_${secondsSource}`] : []),
-      `${symbol}@depth`, `${symbol}@aggTrade`, `${symbol}@ticker`,
+      `${symbol}@ticker`,
     ];
+    const upstream = this.upstreams[market];
     for (const stream of streams) {
-      if (!this.subscribedStreams.has(stream) && !this.pendingSubscriptions.has(stream)) {
-        this.pendingSubscriptions.add(stream);
+      if (!upstream.subscribedStreams.has(stream) && !upstream.pendingSubscriptions.has(stream)) {
+        upstream.pendingSubscriptions.add(stream);
       }
     }
-    this.flushSubscriptions();
+    this.flushSubscriptions(market);
   }
 
-  private flushSubscriptions() {
-    if (!this.binanceWs || this.binanceWs.readyState !== WebSocket.OPEN) return;
-    if (this.pendingSubscriptions.size === 0) return;
-    const streams = Array.from(this.pendingSubscriptions);
+  private flushSubscriptions(market: BinanceMarket) {
+    const upstream = this.upstreams[market];
+    if (!upstream.ws || upstream.ws.readyState !== WebSocket.OPEN) return;
+    if (upstream.pendingSubscriptions.size === 0) return;
+    const streams = Array.from(upstream.pendingSubscriptions);
     const msg = {
       method: "SUBSCRIBE",
       params: streams,
       id: Date.now(),
     };
-    this.binanceWs.send(JSON.stringify(msg));
+    upstream.ws.send(JSON.stringify(msg));
     for (const stream of streams) {
-      this.subscribedStreams.add(stream);
+      upstream.subscribedStreams.add(stream);
     }
-    this.pendingSubscriptions.clear();
+    upstream.pendingSubscriptions.clear();
   }
 
-  private connectBinance() {
-    if (this.binanceWs) {
-      try { this.binanceWs.terminate(); } catch {}
+  private connectBinance(market: BinanceMarket) {
+    const upstream = this.upstreams[market];
+    if (upstream.ws) {
+      try { upstream.ws.terminate(); } catch {}
     }
-    const streams = Array.from(this.subscribedStreams).join("/");
-    const url = streams ? `${BINANCE_WS}/${streams}` : BINANCE_WS;
-    this.binanceWs = new WebSocket(url);
+    const streams = Array.from(upstream.subscribedStreams).join("/");
+    const base = BINANCE_WS[market];
+    const url = streams ? `${base}/${streams}` : base;
+    upstream.ws = new WebSocket(url);
 
-    this.binanceWs.on("open", () => {
-      logger.info("Connected to Binance WebSocket");
-      this.reconnectDelay = 1000;
-      this.flushSubscriptions();
+    upstream.ws.on("open", () => {
+      logger.info({ market }, "Connected to Binance Global WebSocket");
+      upstream.reconnectDelay = 1000;
+      this.flushSubscriptions(market);
     });
 
-    this.binanceWs.on("message", (raw) => {
+    upstream.ws.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        this.broadcast(msg);
+        this.broadcast(msg, market);
       } catch (err) {
-        logger.error({ err }, "Failed to parse Binance message");
+        logger.error({ err, market }, "Failed to parse Binance message");
       }
     });
 
-    this.binanceWs.on("error", (err) => {
-      logger.error({ err }, "Binance WebSocket error");
+    upstream.ws.on("error", (err) => {
+      logger.error({ err, market }, "Binance WebSocket error");
     });
 
-    this.binanceWs.on("close", (code) => {
-      logger.warn({ code }, "Binance WebSocket closed, reconnecting...");
-      setTimeout(() => this.connectBinance(), this.reconnectDelay);
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
+    upstream.ws.on("close", (code) => {
+      logger.warn({ code, market }, "Binance WebSocket closed, reconnecting...");
+      setTimeout(() => this.connectBinance(market), upstream.reconnectDelay);
+      upstream.reconnectDelay = Math.min(upstream.reconnectDelay * 2, this.maxReconnectDelay);
     });
   }
 
-  private broadcast(msg: BinanceKlineMessage | BinanceDepthMessage | BinanceTradeMessage | BinanceTickerMessage | any) {
+  private broadcast(msg: BinanceKlineMessage | BinanceTickerMessage | any, market: BinanceMarket) {
     if (!this.server) return;
     for (const [ws, state] of this.clients) {
       if (ws.readyState !== WebSocket.OPEN) continue;
+      if (state.market !== market) continue;
       if (msg.e === "kline" && msg.k?.i === "1s" && ["5s", "15s", "30s"].includes(state.interval)) {
         const aggregated = aggregateOneSecondKlineUpdate(msg, state);
         if (aggregated) ws.send(JSON.stringify(aggregated));

@@ -4,6 +4,10 @@ import { openrouter } from "../../artifacts/api-server/src/lib/openrouter";
 const imagePath = process.argv[2] ?? "screenshots/notion-indicators.png";
 const base64 = fs.readFileSync(imagePath, "base64");
 
+if (!openrouter) {
+  throw new Error("OPENROUTER_API_KEY is required to extract indicators.");
+}
+
 const response = await openrouter.chat.completions.create({
   model: "openai/gpt-4o-mini",
   messages: [

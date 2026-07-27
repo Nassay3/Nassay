@@ -1,8 +1,10 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
+import type { MarketType } from '@/context/TradingContext';
 
 export interface ChartPage {
   symbol: string;
   interval: string;
+  market: MarketType;
   candles: any[];
   indicators: any;
   hasMore: boolean;
@@ -10,15 +12,45 @@ export interface ChartPage {
   timing: { fetchMs: number; calculateMs: number };
 }
 
-const PAGE_SIZE = 2_500;
+const MAX_INITIAL_BARS = 20_000;
+const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1_000;
+const HIGHER_TIMEFRAME_BARS: Partial<Record<string, number>> = {
+  '1d': 730,  // about two years
+  '1w': 260,  // about five years
+  '1M': 120,  // about ten years
+  '3M': 80,   // about twenty years
+};
+
+function intervalToMs(interval: string): number {
+  const value = Number.parseInt(interval.slice(0, -1), 10) || 1;
+  switch (interval.at(-1)) {
+    case 's': return value * 1_000;
+    case 'm': return value * 60_000;
+    case 'h': return value * 60 * 60 * 1_000;
+    case 'd': return value * 24 * 60 * 60 * 1_000;
+    case 'w': return value * 7 * 24 * 60 * 60 * 1_000;
+    case 'M': return value * 30 * 24 * 60 * 60 * 1_000;
+    default: return 60 * 60 * 1_000;
+  }
+}
+
+/** Start with up to 14 days, so one-minute charts do not silently start with
+ * only the most recent day or two. The cap keeps second charts responsive. */
+function pageSizeForInterval(interval: string): number {
+  const higherTimeframeBars = HIGHER_TIMEFRAME_BARS[interval];
+  if (higherTimeframeBars) return higherTimeframeBars;
+  const twoWeekBars = Math.ceil(TWO_WEEKS_MS / intervalToMs(interval));
+  return Math.max(2_500, Math.min(MAX_INITIAL_BARS, twoWeekBars));
+}
 
 async function fetchChartPage(
   symbol: string,
   interval: string,
+  market: MarketType,
   endTime?: number,
   signal?: AbortSignal,
 ): Promise<ChartPage> {
-  const params = new URLSearchParams({ symbol, interval, limit: String(PAGE_SIZE) });
+  const params = new URLSearchParams({ symbol, interval, market, limit: String(pageSizeForInterval(interval)) });
   if (endTime) params.set('endTime', String(endTime));
   const response = await fetch(`/api/market/chart?${params.toString()}`, { signal });
   if (!response.ok) {
@@ -28,10 +60,10 @@ async function fetchChartPage(
   return response.json();
 }
 
-export function useChartData(symbol: string, interval: string) {
+export function useChartData(symbol: string, interval: string, market: MarketType) {
   return useInfiniteQuery({
-    queryKey: ['market-chart', symbol, interval],
-    queryFn: ({ pageParam, signal }) => fetchChartPage(symbol, interval, pageParam, signal),
+    queryKey: ['market-chart', market, symbol, interval],
+    queryFn: ({ pageParam, signal }) => fetchChartPage(symbol, interval, market, pageParam, signal),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextEndTime : undefined,
     staleTime: 60_000,
@@ -77,9 +109,13 @@ function mergeValue(older: any, newer: any): any {
 export function mergeChartPages(pages: ChartPage[]) {
   const chronological = [...pages].reverse();
   const candles = chronological.flatMap((page) => page.candles);
-  const uniqueCandles = candles.filter(
-    (candle, index) => index === 0 || candle.openTime !== candles[index - 1].openTime,
-  );
+  const byOpenTime = new Map<number, any>();
+  for (const candle of candles) {
+    if (Number.isFinite(Number(candle?.openTime)) && !byOpenTime.has(candle.openTime)) {
+      byOpenTime.set(candle.openTime, candle);
+    }
+  }
+  const uniqueCandles = [...byOpenTime.values()].sort((a, b) => a.openTime - b.openTime);
   const indicators = chronological.reduce<any>(
     (merged, page) => merged ? mergeValue(merged, page.indicators) : page.indicators,
     null,

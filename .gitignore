@@ -47,3 +47,12 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Portable runtime installed by run.py
+.runtime/
+
+# Python launcher temporary files
+__pycache__/
+.run.pid
+run.stdout.log
+run.stderr.log

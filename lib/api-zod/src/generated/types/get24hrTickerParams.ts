@@ -5,8 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { MarketType } from './marketType';
+import type { MarketTypeParamParameter } from './marketTypeParamParameter';
 import type { SymbolParam } from './symbolParam';
 
 export type Get24hrTickerParams = {
+/**
+ * Binance Global market segment
+ */
+market?: MarketTypeParamParameter;
 symbol?: SymbolParam;
 };

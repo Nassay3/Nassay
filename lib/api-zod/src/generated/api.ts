@@ -21,9 +21,11 @@ export const HealthCheckResponse = zod.object({
  * Returns all available USDT symbols from Binance with metadata
  * @summary List USDT trading pairs
  */
+export const listSymbolsQueryMarketDefault = `spot`;
 export const listSymbolsQueryQuoteDefault = `USDT`;
 
 export const ListSymbolsQueryParams = zod.object({
+  "market": zod.enum(['spot', 'futures']).default(listSymbolsQueryMarketDefault).describe('Binance Global market segment'),
   "quote": zod.coerce.string().default(listSymbolsQueryQuoteDefault)
 })
 
@@ -47,6 +49,7 @@ export const ListSymbolsResponse = zod.object({
  * Returns historical candlestick data loaded from Binance Data Vision
  * @summary Get historical candlestick data from Binance Data Vision
  */
+export const getHistoryQueryMarketDefault = `spot`;
 export const getHistoryQueryIntervalDefault = `1m`;
 export const getHistoryQueryDaysDefault = 365;
 export const getHistoryQueryDaysMax = 2000;
@@ -54,6 +57,7 @@ export const getHistoryQueryDaysMax = 2000;
 
 
 export const GetHistoryQueryParams = zod.object({
+  "market": zod.enum(['spot', 'futures']).default(getHistoryQueryMarketDefault).describe('Binance Global market segment'),
   "symbol": zod.coerce.string(),
   "interval": zod.coerce.string().default(getHistoryQueryIntervalDefault),
   "days": zod.coerce.number().min(1).max(getHistoryQueryDaysMax).default(getHistoryQueryDaysDefault)
@@ -82,6 +86,7 @@ export const GetHistoryResponse = zod.object({
  * Calculates all VWAP indicators from historical candles
  * @summary Calculate VWAP indicators
  */
+export const getVwapQueryMarketDefault = `spot`;
 export const getVwapQueryIntervalDefault = `1m`;
 export const getVwapQueryDaysDefault = 365;
 export const getVwapQueryDaysMax = 2000;
@@ -89,6 +94,7 @@ export const getVwapQueryDaysMax = 2000;
 
 
 export const GetVwapQueryParams = zod.object({
+  "market": zod.enum(['spot', 'futures']).default(getVwapQueryMarketDefault).describe('Binance Global market segment'),
   "symbol": zod.coerce.string(),
   "interval": zod.coerce.string().default(getVwapQueryIntervalDefault),
   "days": zod.coerce.number().min(1).max(getVwapQueryDaysMax).default(getVwapQueryDaysDefault)
@@ -300,7 +306,10 @@ export const GetVwapResponse = zod.object({
  * Returns 24-hour ticker statistics from Binance
  * @summary Get 24-hour ticker statistics
  */
+export const get24hrTickerQueryMarketDefault = `spot`;
+
 export const Get24hrTickerQueryParams = zod.object({
+  "market": zod.enum(['spot', 'futures']).default(get24hrTickerQueryMarketDefault).describe('Binance Global market segment'),
   "symbol": zod.coerce.string().optional()
 })
 

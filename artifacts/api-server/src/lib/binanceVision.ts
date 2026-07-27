@@ -13,10 +13,25 @@ import { logger } from "./logger";
 import type { Candle } from "./vwapIndicators";
 import { unzipSync as unzipZip } from "fflate";
 
-const VISION_BASE = "https://data.binance.vision/data/spot";
-// Match TradingView's BINANCE:* market, not the separate BINANCEUS venue.
-// The official market-data-only endpoint avoids account/auth concerns.
-const BINANCE_API = "https://data-api.binance.vision";
+export type BinanceMarket = "spot" | "futures";
+
+const VISION_BASES: Record<BinanceMarket, string> = {
+  spot: "https://data.binance.vision/data/spot",
+  futures: "https://data.binance.vision/data/futures/um",
+};
+
+// These are Binance Global production market-data endpoints. Binance US is
+// intentionally not used anywhere in the terminal.
+const BINANCE_API_BASES: Record<BinanceMarket, string[]> = {
+  spot: [
+    "https://data-api.binance.vision",
+    "https://api.binance.com",
+    "https://api1.binance.com",
+  ],
+  futures: [
+    "https://fapi.binance.com",
+  ],
+};
 
 // ── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -139,19 +154,32 @@ function parseCsv(csv: string): Candle[] {
 
 // ── REST fallback (parallel pagination) ───────────────────────────────────────
 
-async function restPage(symbol: string, interval: string, startTime: number, endTime: number): Promise<Candle[]> {
-  const url = new URL(`${BINANCE_API}/api/v3/klines`);
-  url.searchParams.set("symbol",    symbol);
-  url.searchParams.set("interval",  interval);
-  url.searchParams.set("startTime", String(startTime));
-  url.searchParams.set("endTime",   String(endTime));
-  url.searchParams.set("limit",     "1000");
+async function restPage(
+  symbol: string,
+  interval: string,
+  startTime: number,
+  endTime: number,
+  market: BinanceMarket,
+): Promise<Candle[]> {
+  const bases = BINANCE_API_BASES[market];
+  const klinePath = market === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
   let res: Response | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    res = await fetch(url.toString(), { signal: AbortSignal.timeout(15_000) });
+  for (let attempt = 0; attempt < bases.length; attempt++) {
+    const url = new URL(`${bases[attempt]}${klinePath}`);
+    url.searchParams.set("symbol", symbol);
+    url.searchParams.set("interval", interval);
+    url.searchParams.set("startTime", String(startTime));
+    url.searchParams.set("endTime", String(endTime));
+    url.searchParams.set("limit", "1000");
+    try {
+      res = await fetch(url.toString(), { signal: AbortSignal.timeout(20_000) });
+    } catch (error) {
+      logger.debug({ err: error, base: bases[attempt], market }, "Binance REST endpoint failed; trying fallback");
+      continue;
+    }
     if (res.ok) break;
     if (res.status !== 429 && res.status < 500) return [];
-    await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
+    await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
   }
   if (!res?.ok) return [];
   const raw = (await res.json()) as Array<[number, string, string, string, string, string, number, string, number, string, string, string]>;
@@ -229,7 +257,7 @@ export function aggregateFixedInterval(candles: Candle[], targetMs: number): Can
 }
 
 async function fetchOneSecondDay(symbol: string, day: string): Promise<Candle[]> {
-  const key = `${symbol}:${day}`;
+  const key = `spot:${symbol}:${day}`;
   let entry = oneSecondDays.get(key);
   if (entry?.complete) return entry.candles;
   // Coalesce the three second-frame consumers and avoid tail polling faster
@@ -237,7 +265,7 @@ async function fetchOneSecondDay(symbol: string, day: string): Promise<Candle[]>
   if (entry && Date.now() - entry.updatedAt < 2_000) return entry.candles;
 
   if (!entry?.checkedVision) {
-    const zipped = await fetchZip(`${VISION_BASE}/daily/klines/${symbol}/1s/${symbol}-1s-${day}.zip`);
+    const zipped = await fetchZip(`${VISION_BASES.spot}/daily/klines/${symbol}/1s/${symbol}-1s-${day}.zip`);
     if (zipped?.length) {
       entry = { candles: zipped, complete: true, checkedVision: true, updatedAt: Date.now() };
       oneSecondDays.set(key, entry);
@@ -253,7 +281,7 @@ async function fetchOneSecondDay(symbol: string, day: string): Promise<Candle[]>
   const last = entry.candles.at(-1);
   const fetchStart = Math.max(dayStart, last ? last.closeTime + 1 : dayStart);
   if (fetchStart <= fetchEnd) {
-    const tail = await fetchRestGap(symbol, "1s", fetchStart, fetchEnd);
+    const tail = await fetchRestGap(symbol, "1s", fetchStart, fetchEnd, "spot");
     entry.candles = normalizeCandles([...entry.candles, ...tail], dayStart, dayEnd);
   }
   entry.complete = fetchEnd >= dayEnd;
@@ -328,14 +356,28 @@ function aggregateQuarterly(candles: Candle[]): Candle[] {
   return aggregated;
 }
 
+/** Native daily, weekly, and monthly candles must begin on calendar boundaries.
+ * This prevents a fallback payload of hourly bars from ever being rendered as
+ * a higher timeframe chart. Binance weekly candles begin Monday at 00:00 UTC. */
+function matchesNativeTimeframe(candle: Candle, interval: string): boolean {
+  if (!['1d', '1w', '1M'].includes(interval)) return true;
+  const date = new Date(candle.openTime);
+  if (date.getUTCHours() !== 0 || date.getUTCMinutes() !== 0 || date.getUTCSeconds() !== 0) return false;
+  if (interval === '1w') return date.getUTCDay() === 1;
+  if (interval === '1M') return date.getUTCDate() === 1;
+  return true;
+}
+
 /** Fetch native Binance candles or build exact calendar/fixed custom frames. */
 export async function fetchChartWindow(
   symbol: string,
   interval: string,
   limit: number,
   endTime = Date.now(),
+  market: BinanceMarket = "spot",
 ): Promise<Candle[]> {
   if (["5s", "15s", "30s"].includes(interval)) {
+    if (market === "futures") return [];
     const targetMs = intervalToMs(interval);
     const secondsPerBar = targetMs / 1_000;
     const rawLimit = limit * secondsPerBar + secondsPerBar * 2;
@@ -343,24 +385,36 @@ export async function fetchChartWindow(
     return aggregateFixedInterval(base, targetMs).slice(-limit);
   }
   if (interval === "2m") {
-    const base = await fetchHistoricalWindow(symbol, "1m", limit * 2 + 4, endTime);
+    const base = await fetchHistoricalWindow(symbol, "1m", limit * 2 + 4, endTime, market);
     return aggregateFixedInterval(base, 2 * 60_000).slice(-limit);
   }
   if (interval === "45m") {
-    const base = await fetchHistoricalWindow(symbol, "15m", limit * 3 + 6, endTime);
+    const base = await fetchHistoricalWindow(symbol, "15m", limit * 3 + 6, endTime, market);
     return aggregateFixedInterval(base, 45 * 60_000).slice(-limit);
   }
   if (interval === "3M") {
-    // Binance history is much shorter than 1,000 months; a single maximum
-    // native page is enough to construct every available three-month candle.
-    const base = await fetchHistoricalWindow(symbol, "1M", 1_000, endTime);
+    // Do not request an artificial thousand-month range. Binance may answer
+    // that very old range with an empty page; 360 months is more than enough
+    // for all listed spot pairs and produces genuine calendar quarters.
+    const base = await fetchHistoricalWindow(symbol, "1M", Math.min(limit * 3 + 6, 360), endTime, market);
     return aggregateQuarterly(base).slice(-limit);
   }
-  return fetchHistoricalWindow(symbol, interval, limit, endTime);
+  const native = await fetchHistoricalWindow(symbol, interval, limit, endTime, market);
+  const verified = native.filter((candle) => matchesNativeTimeframe(candle, interval));
+  if (verified.length !== native.length) {
+    logger.warn({ symbol, interval, rejected: native.length - verified.length }, "Rejected misaligned higher-timeframe candles");
+  }
+  return verified;
 }
 
 /** Fetch the entire REST gap in parallel pages */
-async function fetchRestGap(symbol: string, interval: string, gapStart: number, gapEnd: number): Promise<Candle[]> {
+async function fetchRestGap(
+  symbol: string,
+  interval: string,
+  gapStart: number,
+  gapEnd: number,
+  market: BinanceMarket,
+): Promise<Candle[]> {
   const barMs   = intervalToMs(interval);
   const gapBars = Math.ceil((gapEnd - gapStart) / barMs);
   const pages   = Math.max(1, Math.ceil(gapBars / 1000));
@@ -375,20 +429,55 @@ async function fetchRestGap(symbol: string, interval: string, gapStart: number, 
 
   const results = await mapConcurrent(
     pagesToFetch,
-    6,
-    (page) => restPage(symbol, interval, page.start, page.end),
+    4,
+    (page) => restPage(symbol, interval, page.start, page.end, market),
   );
   return results.flat();
+}
+
+function isValidCandle(candle: Candle): boolean {
+  const open = Number(candle.open);
+  const high = Number(candle.high);
+  const low = Number(candle.low);
+  const close = Number(candle.close);
+  const volume = Number(candle.volume);
+  return Number.isFinite(candle.openTime)
+    && Number.isFinite(candle.closeTime)
+    && Number.isFinite(open)
+    && Number.isFinite(high)
+    && Number.isFinite(low)
+    && Number.isFinite(close)
+    && Number.isFinite(volume)
+    && candle.openTime >= 0
+    && candle.closeTime >= candle.openTime
+    && open > 0
+    && high >= Math.max(open, close)
+    && low > 0
+    && low <= Math.min(open, close)
+    && volume >= 0;
 }
 
 function normalizeCandles(candles: Candle[], startTime: number, endTime: number): Candle[] {
   candles.sort((a, b) => a.openTime - b.openTime);
   const seen = new Set<number>();
   return candles.filter((c) => {
-    if (c.openTime < startTime || c.openTime > endTime || seen.has(c.openTime)) return false;
+    if (!isValidCandle(c) || c.openTime < startTime || c.openTime > endTime || seen.has(c.openTime)) return false;
     seen.add(c.openTime);
     return true;
   });
+}
+
+function findMissingRanges(candles: Candle[], intervalMs: number): Array<{ start: number; end: number }> {
+  const gaps: Array<{ start: number; end: number }> = [];
+  for (let index = 1; index < candles.length; index++) {
+    const previous = candles[index - 1].openTime;
+    const current = candles[index].openTime;
+    // A small tolerance avoids false positives around calendar-based frames.
+    if (current - previous > intervalMs * 1.5) {
+      gaps.push({ start: previous + intervalMs, end: current - 1 });
+    }
+  }
+  return gaps;
 }
 
 /** Fetch a bounded chart window. Older windows are requested lazily as the
@@ -398,22 +487,43 @@ export async function fetchHistoricalWindow(
   interval: string,
   limit: number,
   endTime = Date.now(),
+  market: BinanceMarket = "spot",
 ): Promise<Candle[]> {
   const safeLimit = Math.max(100, Math.min(limit, 30_000));
   const barMs = intervalToMs(interval);
   const alignedEnd = Math.min(endTime, Date.now());
   const startTime = alignedEnd - safeLimit * barMs;
-  const key = `window:${symbol}:${interval}:${safeLimit}:${Math.floor(alignedEnd / barMs)}`;
+  const key = `window:${market}:${symbol}:${interval}:${safeLimit}:${Math.floor(alignedEnd / barMs)}`;
   const cached = cacheGet(key);
   if (cached) return cached;
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const request = fetchRestGap(symbol, interval, startTime, alignedEnd)
-    .then((candles) => {
-      const normalized = normalizeCandles(candles, startTime, alignedEnd).slice(-safeLimit);
-      cacheSet(key, normalized);
-      return normalized;
+  const request = fetchRestGap(symbol, interval, startTime, alignedEnd, market)
+    .then(async (candles) => {
+      let normalized = normalizeCandles(candles, startTime, alignedEnd);
+      const gaps = findMissingRanges(normalized, barMs);
+
+      // Retry only the missing ranges. This catches transient REST pagination
+      // failures and prevents broken gaps or malformed OHLC bars from reaching
+      // the chart. Binance can legitimately omit unsupported symbols, so a
+      // remaining gap is logged rather than fabricated with synthetic candles.
+      if (gaps.length) {
+        const repairs = await mapConcurrent(
+          gaps.slice(0, 32),
+          4,
+          (gap) => fetchRestGap(symbol, interval, gap.start, gap.end, market),
+        );
+        normalized = normalizeCandles([...normalized, ...repairs.flat()], startTime, alignedEnd);
+        const unresolved = findMissingRanges(normalized, barMs);
+        if (unresolved.length) {
+          logger.warn({ symbol, interval, gaps: unresolved.length }, "Historical candle gaps remain after repair");
+        }
+      }
+
+      const window = normalized.slice(-safeLimit);
+      cacheSet(key, window);
+      return window;
     })
     .finally(() => inflight.delete(key));
   inflight.set(key, request);
@@ -426,8 +536,9 @@ async function loadHistoricalKlines(
   symbol: string,
   interval: string,
   days: number,
+  market: BinanceMarket,
 ): Promise<Candle[]> {
-  const cacheKey = `${symbol}:${interval}:${days}`;
+  const cacheKey = `${market}:${symbol}:${interval}:${days}`;
   const cached   = cacheGet(cacheKey);
   if (cached) {
     logger.debug({ symbol, interval, days, count: cached.length }, "Serving from cache");
@@ -443,7 +554,7 @@ async function loadHistoricalKlines(
   const monthResults = await mapConcurrent(
     months,
     6,
-    (month) => fetchZip(`${VISION_BASE}/monthly/klines/${symbol}/${interval}/${symbol}-${interval}-${month}.zip`),
+    (month) => fetchZip(`${VISION_BASES[market]}/monthly/klines/${symbol}/${interval}/${symbol}-${interval}-${month}.zip`),
   );
 
   const pool: Candle[] = [];
@@ -465,7 +576,7 @@ async function loadHistoricalKlines(
     const dailyResults = await mapConcurrent(
       missDays,
       8,
-      (day) => fetchZip(`${VISION_BASE}/daily/klines/${symbol}/${interval}/${symbol}-${interval}-${day}.zip`),
+      (day) => fetchZip(`${VISION_BASES[market]}/daily/klines/${symbol}/${interval}/${symbol}-${interval}-${day}.zip`),
     );
     for (const candles of dailyResults) {
       if (candles?.length) pool.push(...candles);
@@ -479,7 +590,7 @@ async function loadHistoricalKlines(
   const gapStart = latestClose > 0 ? latestClose + 1 : start.getTime();
   if (gapStart < now) {
     try {
-      const tail = await fetchRestGap(symbol, interval, gapStart, now);
+      const tail = await fetchRestGap(symbol, interval, gapStart, now, market);
       pool.push(...tail);
     } catch (err) {
       logger.error({ err, symbol }, "REST gap fill failed");
@@ -507,13 +618,14 @@ export function fetchHistoricalKlines(
   symbol: string,
   interval: string,
   days: number,
+  market: BinanceMarket = "spot",
 ): Promise<Candle[]> {
-  const key = `${symbol}:${interval}:${days}`;
+  const key = `${market}:${symbol}:${interval}:${days}`;
   const cached = cacheGet(key);
   if (cached) return Promise.resolve(cached);
   const pending = inflight.get(key);
   if (pending) return pending;
-  const request = loadHistoricalKlines(symbol, interval, days)
+  const request = loadHistoricalKlines(symbol, interval, days, market)
     .finally(() => inflight.delete(key));
   inflight.set(key, request);
   return request;

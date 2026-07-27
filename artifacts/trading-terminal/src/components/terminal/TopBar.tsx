@@ -10,11 +10,11 @@ const SymbolPicker = lazy(() => import('./SymbolPicker'));
 const ChatPanel = lazy(() => import('./ChatPanel'));
 
 export default function TopBar() {
-  const { activeSymbol } = useTradingStore();
+  const { activeSymbol, marketType, setMarketType } = useTradingStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
 
-  const tickerParams = { symbol: activeSymbol };
+  const tickerParams = { symbol: activeSymbol, market: marketType };
   const { data, refetch, isFetching } = useGet24hrTicker(
     tickerParams,
     { query: { queryKey: getGet24hrTickerQueryKey(tickerParams), refetchInterval: 60000 } }
@@ -24,7 +24,7 @@ export default function TopBar() {
 
   useEffect(() => {
     setLiveTicker(null);
-  }, [activeSymbol]);
+  }, [activeSymbol, marketType]);
 
   useEffect(() => {
     const unsubscribe = wsManager.onMessage((msg) => {
@@ -33,7 +33,7 @@ export default function TopBar() {
       }
     });
     return () => { unsubscribe(); };
-  }, [activeSymbol]);
+  }, [activeSymbol, marketType]);
 
   const httpTicker = data?.tickers?.[0];
   const ticker = liveTicker ? {
@@ -51,6 +51,23 @@ export default function TopBar() {
   return (
     <div className="flex h-12 items-center justify-between border-b border-[#252832] bg-[#101116] px-2.5 text-sm shrink-0 select-none shadow-[0_1px_0_rgba(255,255,255,0.02)]">
       <div className="flex items-center gap-4">
+        <div className="flex h-8 shrink-0 items-center rounded-md border border-[#2b2e38] bg-[#15171d] p-0.5">
+          {(['spot', 'futures'] as const).map((market) => (
+            <button
+              key={market}
+              onClick={() => setMarketType(market)}
+              className={`h-6 rounded px-2 text-[10px] font-semibold uppercase transition-colors ${
+                marketType === market
+                  ? 'bg-[#f0b90b] text-[#121318] shadow-sm'
+                  : 'text-[#737b8a] hover:bg-[#222630] hover:text-white'
+              }`}
+              title={market === 'spot' ? 'Binance Global Spot' : 'Binance Global USD-M Futures'}
+            >
+              {market === 'spot' ? 'Spot' : 'Futures'}
+            </button>
+          ))}
+        </div>
+
         {/* Symbol selector */}
         <button
           onClick={() => setPickerOpen(true)}
@@ -108,6 +125,9 @@ export default function TopBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <span className="hidden xl:inline text-[9px] font-semibold uppercase tracking-wider text-[#6f7785]">
+          Binance Global · {marketType === 'spot' ? 'Spot' : 'USD‑M'}
+        </span>
         <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0d0d0d] border border-[#1a1a1a]">
           <Activity size={12} className={liveTicker ? 'text-[#0ecb81]' : 'text-[#555]'} />
           <span className="text-[10px] text-[#666] font-medium uppercase">

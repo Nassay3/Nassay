@@ -10,7 +10,13 @@ import {
   Get24hrTickerQueryParams,
   Get24hrTickerResponse,
 } from "@workspace/api-zod";
-import { fetchChartWindow, fetchHistoricalKlines, fetchHistoricalWindow, intervalToMs } from "../lib/binanceVision";
+import {
+  fetchChartWindow,
+  fetchHistoricalKlines,
+  fetchHistoricalWindow,
+  intervalToMs,
+  type BinanceMarket,
+} from "../lib/binanceVision";
 import {
   calculateVwapIndicators,
   getRequiredDashboardIntervals,
@@ -21,7 +27,30 @@ import {
 } from "../lib/vwapIndicators";
 
 const router: IRouter = Router();
-const BINANCE_API = "https://data-api.binance.vision";
+const BINANCE_REST: Record<BinanceMarket, { base: string; apiPrefix: string }> = {
+  spot: { base: "https://data-api.binance.vision", apiPrefix: "/api/v3" },
+  futures: { base: "https://fapi.binance.com", apiPrefix: "/fapi/v1" },
+};
+
+function marketFrom(value: unknown): BinanceMarket {
+  return value === "futures" ? "futures" : "spot";
+}
+
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index]);
+    }
+  }));
+  return results;
+}
 
 function aggregateCandles(candles: Candle[], targetIntervalMs: number): Candle[] {
   const buckets = new Map<number, Candle>();
@@ -54,37 +83,39 @@ async function fetchVwmaMtfSources(
   symbol: string,
   interval: string,
   endTime: number,
+  market: BinanceMarket,
 ): Promise<MtfCandleSources> {
   const definitions = getRequiredVwmaMtfDefinitions(interval);
-  const entries = await Promise.all(definitions.map(async (definition) => {
+  const entries = await mapConcurrent(definitions, 3, async (definition) => {
     const maximumPeriod = Math.max(...definition.periods);
     if (definition.interval === "45m") {
-      const base = await fetchHistoricalWindow(symbol, "15m", maximumPeriod * 3 + 6, endTime);
+      const base = await fetchHistoricalWindow(symbol, "15m", maximumPeriod * 3 + 6, endTime, market);
       return [definition.interval, aggregateCandles(base, 45 * 60_000)] as const;
     }
-    const series = await fetchHistoricalWindow(symbol, definition.interval, maximumPeriod + 4, endTime);
+    const series = await fetchHistoricalWindow(symbol, definition.interval, maximumPeriod + 4, endTime, market);
     return [definition.interval, series] as const;
-  }));
+  });
   return Object.fromEntries(entries);
 }
 
 const dashboardSourceCache = new Map<string, { endTime: number; promise: Promise<MtfCandleSources> }>();
 
-async function fetchDashboardSources(symbol: string, endTime: number): Promise<MtfCandleSources> {
-  const cached = dashboardSourceCache.get(symbol);
+async function fetchDashboardSources(symbol: string, endTime: number, market: BinanceMarket): Promise<MtfCandleSources> {
+  const cacheKey = `${market}:${symbol}`;
+  const cached = dashboardSourceCache.get(cacheKey);
   // A chart refresh should reuse the same dashboard snapshot; the HTTP response itself
   // is allowed to stay stale for 60 seconds and the ten fixed-frame reads are expensive.
   if (cached && Math.abs(endTime - cached.endTime) < 60_000) return cached.promise;
-  const promise = Promise.all(getRequiredDashboardIntervals().map(async (sourceInterval) => {
-    const series = await fetchChartWindow(symbol, sourceInterval, 1_900, endTime);
+  const promise = mapConcurrent(getRequiredDashboardIntervals(), 3, async (sourceInterval) => {
+    const series = await fetchChartWindow(symbol, sourceInterval, 1_900, endTime, market);
     return [sourceInterval, series] as const;
-  })).then((entries) => Object.fromEntries(entries));
-  dashboardSourceCache.set(symbol, { endTime, promise });
+  }).then((entries) => Object.fromEntries(entries));
+  dashboardSourceCache.set(cacheKey, { endTime, promise });
   if (dashboardSourceCache.size > 8) dashboardSourceCache.delete(dashboardSourceCache.keys().next().value!);
   try {
     return await promise;
   } catch (error) {
-    if (dashboardSourceCache.get(symbol)?.promise === promise) dashboardSourceCache.delete(symbol);
+    if (dashboardSourceCache.get(cacheKey)?.promise === promise) dashboardSourceCache.delete(cacheKey);
     throw error;
   }
 }
@@ -92,7 +123,15 @@ async function fetchDashboardSources(symbol: string, endTime: number): Promise<M
 router.get("/market/chart", async (req, res): Promise<void> => {
   const symbol = String(req.query.symbol ?? "BTCUSDT").toUpperCase();
   const interval = String(req.query.interval ?? "1h");
-  const limit = Math.max(2, Math.min(Number(req.query.limit) || 4_000, 8_000));
+  const market = marketFrom(req.query.market);
+  if (market === "futures" && interval.endsWith("s")) {
+    res.status(400).json({ error: "Second-based candles are not available for Binance USD-M Futures. Use 1m or higher." });
+    return;
+  }
+  // The terminal requests enough bars to make the last 1–2 weeks inspectable
+  // on intraday timeframes. Keep a firm ceiling so one request cannot exhaust
+  // the server or browser.
+  const limit = Math.max(2, Math.min(Number(req.query.limit) || 4_000, 20_000));
   const requestedEnd = Number(req.query.endTime) || Date.now();
   const barMs = intervalToMs(interval);
   const weekWarmup = Math.ceil((8 * 86_400_000) / barMs);
@@ -101,9 +140,9 @@ router.get("/market/chart", async (req, res): Promise<void> => {
 
   try {
     const [source, mtfSources, dashboardSources] = await Promise.all([
-      fetchChartWindow(symbol, interval, limit + warmupBars, requestedEnd),
-      fetchVwmaMtfSources(symbol, interval, requestedEnd),
-      fetchDashboardSources(symbol, requestedEnd),
+      fetchChartWindow(symbol, interval, limit + warmupBars, requestedEnd, market),
+      fetchVwmaMtfSources(symbol, interval, requestedEnd, market),
+      fetchDashboardSources(symbol, requestedEnd, market),
     ]);
     if (!source.length) {
       res.status(502).json({ error: "No market data returned" });
@@ -124,6 +163,7 @@ router.get("/market/chart", async (req, res): Promise<void> => {
     res.json({
       symbol,
       interval,
+      market,
       candles: requested,
       indicators,
       hasMore: source.length >= limit + Math.min(warmupBars, 1_000),
@@ -134,19 +174,24 @@ router.get("/market/chart", async (req, res): Promise<void> => {
       },
     });
   } catch (err) {
-    logger.error({ err, symbol, interval }, "Failed to build chart page");
+    logger.error({ err, symbol, interval, market }, "Failed to build chart page");
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
-async function binanceFetch<T>(path: string, params: Record<string, string | number | undefined>): Promise<T> {
+async function binanceFetch<T>(
+  market: BinanceMarket,
+  path: "exchangeInfo" | "ticker/24hr" | "ticker/bookTicker",
+  params: Record<string, string | number | undefined>,
+): Promise<T> {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") {
       searchParams.set(key, String(value));
     }
   }
-  const url = `${BINANCE_API}${path}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+  const source = BINANCE_REST[market];
+  const url = `${source.base}${source.apiPrefix}/${path}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const response = await fetch(url);
   if (!response.ok) {
     const text = await response.text();
@@ -162,6 +207,7 @@ router.get("/market/symbols", async (req, res): Promise<void> => {
     return;
   }
   const quote = parsed.data.quote?.toUpperCase() ?? "USDT";
+  const market = marketFrom(parsed.data.market);
   try {
     const info = await binanceFetch<{
       symbols: Array<{
@@ -169,12 +215,17 @@ router.get("/market/symbols", async (req, res): Promise<void> => {
         baseAsset: string;
         quoteAsset: string;
         status: string;
+        contractType?: string;
         filters: Array<{ filterType: string; minPrice?: string; maxPrice?: string; tickSize?: string; minQty?: string; stepSize?: string }>;
       }>;
-    }>("/api/v3/exchangeInfo", {});
+    }>(market, "exchangeInfo", {});
 
     const symbols = info.symbols
-      .filter((s) => s.quoteAsset === quote && s.status === "TRADING")
+      .filter((s) =>
+        s.quoteAsset === quote
+        && s.status === "TRADING"
+        && (market === "spot" || s.contractType === "PERPETUAL")
+      )
       .map((s) => {
         const priceFilter = s.filters.find((f) => f.filterType === "PRICE_FILTER");
         const lotSize = s.filters.find((f) => f.filterType === "LOT_SIZE");
@@ -193,7 +244,7 @@ router.get("/market/symbols", async (req, res): Promise<void> => {
 
     res.json(ListSymbolsResponse.parse({ symbols, count: symbols.length }));
   } catch (err) {
-    logger.error({ err }, "Failed to fetch symbols");
+    logger.error({ err, market }, "Failed to fetch symbols");
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -205,7 +256,8 @@ router.get("/market/history", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const candles = await fetchHistoricalKlines(parsed.data.symbol, parsed.data.interval, parsed.data.days);
+    const market = marketFrom(parsed.data.market);
+    const candles = await fetchHistoricalKlines(parsed.data.symbol, parsed.data.interval, parsed.data.days, market);
     res.json(GetHistoryResponse.parse({ symbol: parsed.data.symbol, interval: parsed.data.interval, candles }));
   } catch (err) {
     logger.error({ err, symbol: parsed.data.symbol }, "Failed to fetch historical data");
@@ -220,7 +272,8 @@ router.get("/market/vwap", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const candles = await fetchHistoricalKlines(parsed.data.symbol, parsed.data.interval, parsed.data.days);
+    const market = marketFrom(parsed.data.market);
+    const candles = await fetchHistoricalKlines(parsed.data.symbol, parsed.data.interval, parsed.data.days, market);
     const indicators = calculateVwapIndicators(candles, parsed.data.symbol, parsed.data.interval);
     res.json(GetVwapResponse.parse(indicators));
   } catch (err) {
@@ -236,19 +289,20 @@ router.get("/market/ticker/24hr", async (req, res): Promise<void> => {
     return;
   }
   try {
+    const market = marketFrom(parsed.data.market);
     const raw = await binanceFetch<
       Array<{
         symbol: string;
         priceChange: string;
         priceChangePercent: string;
         weightedAvgPrice: string;
-        prevClosePrice: string;
+        prevClosePrice?: string;
         lastPrice: string;
         lastQty: string;
-        bidPrice: string;
-        bidQty: string;
-        askPrice: string;
-        askQty: string;
+        bidPrice?: string;
+        bidQty?: string;
+        askPrice?: string;
+        askQty?: string;
         openPrice: string;
         highPrice: string;
         lowPrice: string;
@@ -260,11 +314,29 @@ router.get("/market/ticker/24hr", async (req, res): Promise<void> => {
         lastId: number;
         count: number;
       }>
-    >("/api/v3/ticker/24hr", parsed.data.symbol ? { symbol: parsed.data.symbol } : {});
+    >(market, "ticker/24hr", parsed.data.symbol ? { symbol: parsed.data.symbol } : {});
     const tickers = Array.isArray(raw) ? raw : [raw];
-    res.json(Get24hrTickerResponse.parse({ tickers, count: tickers.length }));
+    const futuresBook = market === "futures"
+      ? await binanceFetch<Array<{ symbol: string; bidPrice: string; bidQty: string; askPrice: string; askQty: string }>>(
+          market,
+          "ticker/bookTicker",
+          parsed.data.symbol ? { symbol: parsed.data.symbol } : {},
+        )
+      : [];
+    const books = new Map(
+      (Array.isArray(futuresBook) ? futuresBook : [futuresBook]).map((book) => [book.symbol, book]),
+    );
+    const normalized = tickers.map((ticker) => ({
+      ...ticker,
+      prevClosePrice: ticker.prevClosePrice ?? ticker.openPrice,
+      bidPrice: ticker.bidPrice ?? books.get(ticker.symbol)?.bidPrice ?? "0",
+      bidQty: ticker.bidQty ?? books.get(ticker.symbol)?.bidQty ?? "0",
+      askPrice: ticker.askPrice ?? books.get(ticker.symbol)?.askPrice ?? "0",
+      askQty: ticker.askQty ?? books.get(ticker.symbol)?.askQty ?? "0",
+    }));
+    res.json(Get24hrTickerResponse.parse({ tickers: normalized, count: normalized.length }));
   } catch (err) {
-    logger.error({ err }, "Failed to fetch 24hr ticker");
+    logger.error({ err, market: parsed.success ? parsed.data.market : undefined }, "Failed to fetch 24hr ticker");
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
