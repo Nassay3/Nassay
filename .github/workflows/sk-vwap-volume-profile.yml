@@ -1,0 +1,39 @@
+name: SK VWAP Volume Profile Backtest
+
+on:
+  push:
+    branches: [sk-vwap-volume-profile-2026-07-29]
+    paths:
+      - 'research/sk_backtest/sk_vwap_volume_profile.py'
+      - '.github/workflows/sk-vwap-volume-profile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pandas==2.2.3 numpy==2.1.3 pyarrow==18.1.0 requests==2.32.3
+      - name: Run nested BC VWAP and volume profile backtest
+        env:
+          SYMBOLS: BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LINKUSDT,ARBUSDT,OPUSDT
+          START: 2022-01
+          END: 2024-12
+          FEE: '0.001'
+          SLIP: '0.0005'
+        run: python research/sk_backtest/sk_vwap_volume_profile.py
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sk-vwap-volume-profile-results
+          path: artifacts/sk_vwap_volume_profile
+          if-no-files-found: error
+          retention-days: 30
