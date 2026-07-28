@@ -37,10 +37,19 @@ jobs:
           python -m py_compile research/sk_backtest/backtest.py
       - name: Run backtest
         run: python research/sk_backtest/backtest.py
+      - name: Collect generated reports
+        shell: bash
+        run: |
+          mkdir -p artifact
+          find . -type f \( -name '*.csv' -o -name '*.parquet' -o -name '*.json' -o -name '*.md' -o -name '*.png' \) \
+            ! -path './.git/*' ! -path './node_modules/*' ! -path './data/*' \
+            -exec cp --parents '{}' artifact/ \;
+          echo 'Collected files:'
+          find artifact -type f -maxdepth 8 -print
       - name: Upload complete results
         uses: actions/upload-artifact@v4
         with:
           name: sk-backtest-results
-          path: research/sk_backtest/output/
+          path: artifact/
           if-no-files-found: error
           retention-days: 30
