@@ -1,0 +1,25 @@
+name: Gold First Fractal Temp
+on:
+  push:
+    branches: [gold-backtest-temp-20260908]
+    paths:
+      - 'research/gold_first_fractal.py'
+      - '.github/workflows/gold_first_fractal_temp.yml'
+jobs:
+  fractal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pandas numpy
+      - name: Sparse clone XAU M1 files only
+        run: |
+          git clone --depth 1 --filter=blob:none --no-checkout https://github.com/simom1/XAUUSD-history.git /tmp/xau
+          git -C /tmp/xau sparse-checkout init --no-cone
+          git -C /tmp/xau sparse-checkout set --no-cone 'Gold-Cash/XAUUSD/XAUUSD_M1_2020_2022.csv' 'Gold-Cash/XAUUSD/XAUUSD_M1_2023_2026.csv'
+          git -C /tmp/xau checkout main
+      - name: Run first-fractal test
+        run: python research/gold_first_fractal.py
