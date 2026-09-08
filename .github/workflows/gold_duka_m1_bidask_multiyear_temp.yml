@@ -36,12 +36,22 @@ jobs:
               for side in ask bid; do
                 f="xauusd_${side}_m1_${y}_${m}.csv"
                 p="xauusd/${side}/m1/${f}"
-                echo "FETCH $p"
                 git -C /tmp/dukasrc show "HEAD:${p}" > "/tmp/dukam1/${side}/${f}"
                 test -s "/tmp/dukam1/${side}/${f}"
               done
             done
           done
           du -sh /tmp/dukam1
+      - name: Normalize Pandas timestamp units
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('research/gold_duka_m1_bidask_multiyear.py')
+          s=p.read_text()
+          s=s.replace("dtime=(dec.index+pd.Timedelta(minutes=5)).asi8", "dtime=pd.DatetimeIndex(dec.index+pd.Timedelta(minutes=5)).as_unit('ns').asi8")
+          s=s.replace("times=q.time.array.asi8", "times=pd.DatetimeIndex(q.time).as_unit('ns').asi8")
+          p.write_text(s)
+          assert ".as_unit('ns').asi8" in s
+          PY
       - name: Run multi-year BID ASK execution validation
         run: python research/gold_duka_m1_bidask_multiyear.py
