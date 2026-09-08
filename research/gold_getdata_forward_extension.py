@@ -20,15 +20,17 @@ def prepare_feed():
 
 def main():
     path=prepare_feed()
-    # Feed-independent forward validation only. Jul10-Jul22 is warm-up; no tuning on this feed.
     g.URLS=[path]; m.g.URLS=g.URLS; p.g.URLS=g.URLS
     g.END=EXT_END
     x=g.prep()
     ed=m.build_edges(x)
     champion=m.simulate(x,ed,('BRK','EXP'),EXT_START,EXT_END,1.0,6,15.0,144)
     baseline=m.simulate(x,ed,('BRK','EXP'),EXT_START,EXT_END,1.0,4,10.0,144)
-    L,S=p.base_signal(x)
-    pyramid=p.simulate(x,L,S,EXT_START,EXT_END,1.0,6,10.0,288)
+    Lb,Sb=p.base_signal(x)
+    pyramid_brk=p.simulate(x,Lb,Sb,EXT_START,EXT_END,1.0,6,10.0,288)
+    # Frozen sequential BRK+EXP winner selected entirely on the historical source.
+    Lu=(ed['BRK'][0]|ed['EXP'][0]).fillna(False);Su=(ed['BRK'][1]|ed['EXP'][1]).fillna(False);conf=Lu&Su;Lu&=~conf;Su&=~conf
+    pyramid_brk_exp=p.simulate(x,Lu,Su,EXT_START,EXT_END,1.25,4,15.0,144)
     mask=(x.index>=EXT_START)&(x.index<EXT_END)
     counts={k:{'long':int(v[0][mask].sum()),'short':int(v[1][mask].sum())} for k,v in ed.items() if k in ('BRK','EXP')}
     print('RESULT_JSON_START')
@@ -39,7 +41,8 @@ def main():
       'selection':'NONE on GetData; all parameters frozen before this feed was inspected',
       'champion_BRK_EXP_TP15_max6':champion,
       'baseline_BRK_EXP_TP10_max4':baseline,
-      'aggressive_BRK_sequential_pyramid':pyramid,
+      'aggressive_BRK_sequential_pyramid':pyramid_brk,
+      'frozen_BRK_EXP_sequential_BE1.25_max4_TP15':pyramid_brk_exp,
       'signal_counts':counts,
       'limitations':['different broker/mid-quote feed than training source','tick volume proxy','M1 OHLC resampled to M5','short forward window ~6 weeks','no explicit spread/slippage beyond fixed R cost']
     },default=float))
