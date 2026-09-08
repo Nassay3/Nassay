@@ -5,19 +5,18 @@ import argparse, json
 import numpy as np
 import pandas as pd
 import xauusd_real_grid as c
+from xauusd_vwap_fixed import vwap_context as fixed_vwap_context
 
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--data',type=Path,required=True); ap.add_argument('--out',type=Path,default=Path('xau_quick')); a=ap.parse_args(); a.out.mkdir(parents=True,exist_ok=True)
-    raw=c.read_data(a.data); vc=c.vwap_context(raw)
+    raw=c.read_data(a.data); vc=fixed_vwap_context(raw)
     f15=c.add_feat(c.resample(raw,15)); f60=c.add_feat(c.resample(raw,60)); f240=c.add_feat(c.resample(raw,240)); base={15:f15,60:f60,240:f240}
     x=c.attach_context(f15,15,vc,base); x.attrs['tf']=15
 
-    # Diagnostic only: do not alter signal/trade behavior.
     print('VWAP_DIAG_DTYPE', raw.time.dtype, flush=True)
     vals=raw.time.astype('int64')
-    print('VWAP_DIAG_INT', int(vals.iloc[0]), int(vals.iloc[-1]), flush=True)
-    print('VWAP_DIAG_DAYNUM_UNIQUE', int((vals//86_400_000_000_000).nunique()), 'ACTUAL_DATES', int(raw.time.dt.date.nunique()), flush=True)
+    print('VWAP_DIAG_OLD_DAYNUM_UNIQUE', int((vals//86_400_000_000_000).nunique()), 'ACTUAL_DATES', int(raw.time.dt.date.nunique()), flush=True)
     diag={}
     for col in ('d_vwap','prev_d_vwap','w_vwap','prev_w_vwap','s_vwap','prev_s_vwap'):
         diag[col+'_finite']=int(np.isfinite(x[col]).sum())
@@ -25,7 +24,7 @@ def main():
     w=(x.close>x.w_vwap)&(x.w_vwap>x.prev_w_vwap)&(x.close>x.prev_w_vwap)
     s=(x.close>x.s_vwap)&(x.s_vwap>x.prev_s_vwap)&(x.close>x.prev_s_vwap)
     diag.update({'D_pass':int(d.sum()),'W_pass':int(w.sum()),'S_pass':int(s.sum()),'DW_pass':int((d&w).sum()),'DWS_pass':int((d&w&s).sum())})
-    print('VWAP_DIAG',json.dumps(diag,sort_keys=True),flush=True)
+    print('VWAP_DIAG_FIXED',json.dumps(diag,sort_keys=True),flush=True)
 
     cfgs=[c.SigCfg(15,se,tr,vw,z,zs) for se in ('SHALLOW','DEEP','BREAKOUT') for tr in ('CORE','FULL') for vw in ('NONE','DW','DWS','LADDER') for z in (.5,.875) for zs in ('NONE','BOTH')]
     rows=[]; cache={}; ex0=c.ExitCfg(2.0,'3R')
@@ -54,6 +53,6 @@ def main():
         cfg=c.SigCfg(15,str(sel.setup),str(sel.trend),vw,float(sel.zthr),str(sel.zslow)); tt=c.simulate(x,c.signal(x,cfg),c.ExitCfg(float(sel.atr_mult),str(sel.management))); tr,va,oo=c.three(tt)
         ab.append({'vwap':vw,**{f'train_{k}':v for k,v in tr.items()},**{f'valid_{k}':v for k,v in va.items()},**{f'oos_{k}':v for k,v in oo.items()}})
     pd.DataFrame(ab).to_csv(a.out/'vwap_ablation.csv',index=False)
-    summary={'status':'DIAGNOSTIC_ONLY' if diagnostic or len(dep)==0 else 'VALIDATED_TRAIN_VALIDATION','data_start':str(raw.time.min()),'data_end':str(raw.time.max()),'rows':len(raw),'risk':c.RISK,'grid':len(cfgs),'selected':sel.to_dict(),'all_metrics':c.metrics(t),'vwap_diag':diag}
+    summary={'status':'DIAGNOSTIC_ONLY' if diagnostic or len(dep)==0 else 'VALIDATED_TRAIN_VALIDATION','data_start':str(raw.time.min()),'data_end':str(raw.time.max()),'rows':len(raw),'risk':c.RISK,'grid':len(cfgs),'selected':sel.to_dict(),'all_metrics':c.metrics(t),'vwap_diag_fixed':diag}
     (a.out/'summary.json').write_text(json.dumps(summary,indent=2,default=str)); print(json.dumps(summary,indent=2,default=str),flush=True)
 if __name__=='__main__': main()
