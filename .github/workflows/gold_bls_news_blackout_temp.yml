@@ -1,5 +1,6 @@
 name: Gold BLS News Blackout Temp
 
+# rerun 2026-09-08 after exact-equity external validation
 on:
   push:
     branches: [gold-backtest-temp-20260908]
