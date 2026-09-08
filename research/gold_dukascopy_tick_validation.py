@@ -1,6 +1,5 @@
 import os, json, lzma, struct, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
 import numpy as np
 import pandas as pd
 import gold_m5_discovery_spike as g
@@ -19,7 +18,6 @@ SCALE=1000.0
 
 
 def url_for(ts):
-    # Dukascopy months are zero-based in the path.
     return f"https://datafeed.dukascopy.com/datafeed/XAUUSD/{ts.year}/{ts.month-1:02d}/{ts.day:02d}/{ts.hour:02d}h_ticks.bi5"
 
 def path_for(ts):
@@ -66,7 +64,6 @@ def make_m1(hours):
         valid_hours+=1;nt+=len(ticks)
         t=pd.DataFrame(ticks,columns=['time','bid','ask','bid_vol','ask_vol'])
         t['mid']=(t.bid+t.ask)/2.0;t['spread']=t.ask-t.bid
-        # bounded spread sample for diagnostics
         spreads.extend(t.spread.iloc[::max(1,len(t)//100)].tolist())
         t['minute']=t.time.dt.floor('min')
         q=t.groupby('minute',sort=True).agg(open=('mid','first'),high=('mid','max'),low=('mid','min'),close=('mid','last'),tick_volume=('mid','size')).reset_index().rename(columns={'minute':'time'})
@@ -80,7 +77,9 @@ def make_m1(hours):
 
 def build_signals(m1path):
     g.URLS=[m1path];m.g.URLS=g.URLS;vp.g.URLS=g.URLS;vw.g.URLS=g.URLS;vc.g.URLS=g.URLS;g.END=END
-    x=g.prep();idx=x.index;ed=m.build_edges(x);names=('BRK','EXP','PULL','FRACTAL')
+    x=g.prep();idx=x.index;ed=m.build_edges(x)
+    # WF69 was frozen on UNION3 only. FRACTAL is deliberately excluded.
+    names=('BRK','EXP','PULL')
     L=pd.Series(False,index=idx);S=pd.Series(False,index=idx)
     for nm in names:L|=ed[nm][0];S|=ed[nm][1]
     clash=L&S;L&=~clash;S&=~clash
@@ -96,8 +95,9 @@ class Lot:
     __slots__=('d','entry','stop','risk','risk_cash','target','opened','protected')
     def __init__(self,d,e,st,r,rc,tg,op):self.d=d;self.entry=e;self.stop=st;self.risk=r;self.risk_cash=rc;self.target=tg;self.opened=op;self.protected=False
 
-def sim_ticks(x,hours,af,beR,maxlots,tpR,require_fresh):
+def sim_ticks(x,hours,af,beR,maxlots,tpR,hold_hours,extra_costR=0.0):
     # Decisions are made only after a completed M5 bar; first tick >= decision time is executable.
+    # WF69 requires a fresh same-direction signal for every add.
     dec=x[(x.index>=TEST_START-pd.Timedelta(minutes=5))&(x.index<END)].copy()
     decisions=[]
     for ts,row in dec.iterrows():decisions.append((ts+pd.Timedelta(minutes=5),row))
@@ -116,10 +116,8 @@ def sim_ticks(x,hours,af,beR,maxlots,tpR,require_fresh):
             if t<TEST_START:continue
             if t>=END:break
             last_bid,last_ask=bid,ask
-            # Apply every completed-bar decision before this tick.
             while di<len(decisions) and decisions[di][0]<=t:
                 dt,row=decisions[di];di+=1
-                # Protection is close-confirmed, as in the OHLC engine.
                 midc=float(row['close'])
                 for z in lots:
                     if not z.protected and z.d*(midc-z.entry)/z.risk>=beR:
@@ -130,11 +128,8 @@ def sim_ticks(x,hours,af,beR,maxlots,tpR,require_fresh):
                     if bool(row['sigL']) and not bool(row['sigS']):pending=(1,row,False)
                     elif bool(row['sigS']) and not bool(row['sigL']):pending=(-1,row,False)
                 elif len(lots)<maxlots and allprot:
-                    ok=True
-                    if require_fresh:
-                        ok=(cdir==1 and bool(row['sigL']) and not bool(row['sigS'])) or (cdir==-1 and bool(row['sigS']) and not bool(row['sigL']))
-                    if ok:pending=(cdir,row,True)
-            # Execute pending order at actual first quote after decision: buy ask / sell bid.
+                    fresh=(cdir==1 and bool(row['sigL']) and not bool(row['sigS'])) or (cdir==-1 and bool(row['sigS']) and not bool(row['sigL']))
+                    if fresh:pending=(cdir,row,True)
             if pending is not None:
                 d,row,isadd=pending;e=ask if d==1 else bid;avv=float(row['atr14'])
                 sw=float(row['slo7']) if d==1 else float(row['shi7'])
@@ -147,19 +142,19 @@ def sim_ticks(x,hours,af,beR,maxlots,tpR,require_fresh):
                         if isadd:adds+=1
                         else:campaigns+=1
                 pending=None
-            # Tick-true exits. Stop uses executable side and can gap beyond level; TP uses limit level once executable quote crosses it.
             surv=[]
             for z in lots:
-                exit_px=None;rr=None
+                rr=None
                 if z.d==1:
-                    if bid<=z.stop:exit_px=bid;rr=(exit_px-z.entry)/z.risk
-                    elif bid>=z.target:exit_px=z.target;rr=tpR
+                    if bid<=z.stop:rr=(bid-z.entry)/z.risk
+                    elif bid>=z.target:rr=tpR
                 else:
-                    if ask>=z.stop:exit_px=ask;rr=(z.entry-exit_px)/z.risk
-                    elif ask<=z.target:exit_px=z.target;rr=tpR
-                if rr is None and t-z.opened>=pd.Timedelta(hours=12):
-                    exit_px=bid if z.d==1 else ask;rr=z.d*(exit_px-z.entry)/z.risk
+                    if ask>=z.stop:rr=(z.entry-ask)/z.risk
+                    elif ask<=z.target:rr=tpR
+                if rr is None and t-z.opened>=pd.Timedelta(hours=hold_hours):
+                    px=bid if z.d==1 else ask;rr=z.d*(px-z.entry)/z.risk
                 if rr is not None:
+                    rr-=extra_costR
                     bal+=z.risk_cash*rr;closed+=1;rtot+=rr
                     if rr>0:wins+=1;pos+=rr
                     elif rr<0:neg-=rr
@@ -168,10 +163,9 @@ def sim_ticks(x,hours,af,beR,maxlots,tpR,require_fresh):
             if not lots:cdir=0
             eq=mtm(bid,ask);peak=max(peak,eq);dd=max(dd,(peak-eq)/peak if peak>0 else 0.)
         if hh%240==0:print('SIM_HOURS',hh,'/',len(hours),'closed',closed,flush=True)
-    # Liquidate remaining at final executable quotes.
     if np.isfinite(last_bid):
         for z in lots:
-            px=last_bid if z.d==1 else last_ask;rr=z.d*(px-z.entry)/z.risk
+            px=last_bid if z.d==1 else last_ask;rr=z.d*(px-z.entry)/z.risk-extra_costR
             bal+=z.risk_cash*rr;closed+=1;rtot+=rr
             if rr>0:wins+=1;pos+=rr
             elif rr<0:neg-=rr
@@ -188,15 +182,13 @@ def main():
             if done%240==0:print('DL',done,'/',len(hours),'valid',valid,'MB',round(byt/1e6,1),flush=True)
     m1path,datadiag=make_m1(hours);x=build_signals(m1path)
     print('DUKA_DATA',datadiag,flush=True)
-    candidates={'A_METHOD':(.60,1.25,3,26.),'B_HIST':(.575,1.25,3,28.)}
+    af,be,ml,tp,hold=.80,2.25,3,28.,18.
     out={}
-    for name,(af,be,ml,tp) in candidates.items():
-        out[name]={
-            'AUTO_ADD':sim_ticks(x,hours,af,be,ml,tp,False),
-            'FRESH_SIGNAL_ADD':sim_ticks(x,hours,af,be,ml,tp,True)
-        }
-        print('CAND',name,out[name],flush=True)
+    for extra in (0.0,.02,.05,.10):
+        key=f'BIDASK_PLUS_{extra:.2f}R'
+        out[key]=sim_ticks(x,hours,af,be,ml,tp,hold,extra)
+        print('WF69',key,out[key],flush=True)
     print('RESULT_JSON_START')
-    print(json.dumps({'source':'Dukascopy public XAUUSD BI5 quote ticks','download_window':[str(DL_START),str(END)],'test_window':[str(TEST_START),str(END)],'data':datadiag,'risk_rule':'0.36% of current executable bid/ask MTM equity per fresh lot; old lots BE before add','execution':'long enters ask/exits bid; short enters bid/exits ask; variable spread implicit; stop can fill through level at observed quote; TP at limit level after executable-side cross','results':out,'limitations':['Dukascopy is an independent broker quote feed, not CME futures','No explicit commission/swap added beyond real bid/ask spread','Signal levels/profile still use quote tick counts rather than COMEX traded volume','Six-week validation cannot establish multi-year stability']},default=float))
+    print(json.dumps({'candidate':'WF69_FROZEN','source':'Dukascopy public XAUUSD BI5 quote ticks','download_window':[str(DL_START),str(END)],'test_window':[str(TEST_START),str(END)],'data':datadiag,'edges':['BRK','EXP','PULL'],'params':{'atr_floor':af,'beR':be,'max_lots':ml,'targetR':tp,'hold_hours':hold,'fresh_signal_add':True},'filters':'causal 24h activity POC + Riyadh WEEK_PLUS_ANY VWAP consensus','risk_rule':'0.36% of current executable bid/ask MTM equity per fresh lot; prior live lots must be protected before add','execution':'long enters ask/exits bid; short enters bid/exits ask; variable spread implicit; stop can fill through level at observed quote; TP at limit level after executable-side cross; optional extra round-trip cost stress in R','results':out,'limitations':['Dukascopy is an independent broker quote feed, not CME futures','extra_costR is sensitivity stress, not a claim about exact broker commission','Signal levels/profile use quote activity rather than COMEX traded volume','Six-week validation cannot establish multi-year stability']},default=float))
     print('RESULT_JSON_END')
 if __name__=='__main__':main()
