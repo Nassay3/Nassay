@@ -40,6 +40,23 @@ def records(sig,L,S,label):
     return out
 
 
+def compact(rr):
+    # Lossless timestamps at minute resolution; risk pct quantized to 1e-8 (well below market tick relevance).
+    mins=[int(z['t']//60000) for z in rr]
+    first=mins[0] if mins else 0
+    dt=[0]+[mins[i]-mins[i-1] for i in range(1,len(mins))] if mins else []
+    dirs=''.join('L' if z['d']==1 else 'S' for z in rr)
+    rp8=[int(round(z['rp']*100_000_000)) for z in rr]
+    # Verify round trip before emitting.
+    cur=first;ts=[]
+    for i,d in enumerate(dt):
+        if i>0: cur+=d
+        ts.append(cur*60000)
+    assert ts==[z['t'] for z in rr]
+    assert all(abs(rp8[i]/100_000_000-rr[i]['rp'])<=5.1e-9 for i in range(len(rr)))
+    return {'first_min':first,'dt_min':dt,'dirs':dirs,'rp8':rp8}
+
+
 def main():
     sig=w.build_winner_signals(); exe,ediag=w.d.load_execution(); feat=prior_duka_features(sig,exe)
     baseL=sig.sigL.astype(bool);baseS=sig.sigS.astype(bool)
@@ -49,13 +66,12 @@ def main():
     robustL=baseL&qL;robustS=baseS&qS
     base=records(sig,baseL,baseS,'BASE')
     robust=records(sig,robustL,robustS,'M5_PRESS_SPR125')
-    # Causality/sanity checks: sorted, unique timestamps per side, valid risk pct.
     for name,rr in [('BASE',base),('M5_PRESS_SPR125',robust)]:
         assert all(rr[i]['t']<=rr[i+1]['t'] for i in range(len(rr)-1))
         assert all(0<z['rp']<=.012 and z['d'] in (-1,1) for z in rr)
         assert len({(z['t'],z['d']) for z in rr})==len(rr)
     print('SIGNAL_EXPORT_SUMMARY',json.dumps({'window':[str(START),str(END)],'base_n':len(base),'robust_n':len(robust),'execution_data':ediag},default=float),flush=True)
-    print('BASE_JSON',json.dumps(base,separators=(',',':')))
-    print('ROBUST_JSON',json.dumps(robust,separators=(',',':')))
+    print('BASE_COMPACT',json.dumps(compact(base),separators=(',',':')))
+    print('ROBUST_COMPACT',json.dumps(compact(robust),separators=(',',':')))
 
 if __name__=='__main__':main()
