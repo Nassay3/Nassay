@@ -1,4 +1,4 @@
-import os, json
+import os, json, time, random, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
@@ -10,6 +10,41 @@ VWAP_MODE='W_REL2_PRICE2'
 PROFILE_LB=96
 AF=.80; BE_R=2.25; MAX_LOTS=3; TP_R=28.; HOLD_HOURS=18.
 EXTRAS=np.array([0.0,.02,.05,.10],dtype=float)
+MIN_COVERAGE=.85
+
+
+def expected_hours():
+    allh=pd.date_range(d.DL_START,d.END-pd.Timedelta(hours=1),freq='1h',tz='UTC')
+    # Gold quote market: include Mon-Fri plus Sunday evening UTC; avoid known closed weekend requests.
+    return [t for t in allh if t.weekday()<5 or (t.weekday()==6 and t.hour>=21)]
+
+
+def robust_fetch_hour(ts):
+    p=d.path_for(ts)
+    if os.path.exists(p) and os.path.getsize(p)>0:
+        return str(ts),p,os.path.getsize(p),'cached'
+    url=d.url_for(ts)
+    last=''
+    for attempt in range(7):
+        try:
+            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (XAU research validation)','Accept':'*/*'})
+            with urllib.request.urlopen(req,timeout=30) as r:
+                data=r.read()
+            if data:
+                os.makedirs(d.RAW,exist_ok=True)
+                with open(p,'wb') as f:f.write(data)
+                return str(ts),p,len(data),'ok'
+            last='empty'
+        except urllib.error.HTTPError as e:
+            last=f'http{e.code}'
+            if e.code==404:
+                return str(ts),None,0,last
+            if e.code not in (403,408,425,429,500,502,503,504):
+                return str(ts),None,0,last
+        except Exception as e:
+            last=type(e).__name__
+        time.sleep(min(8.0,.6*(2**attempt))+random.random()*.35)
+    return str(ts),None,0,last
 
 
 def build_signals(m1path):
@@ -36,6 +71,7 @@ def sim_multi(x,hours):
     ns=len(EXTRAS)
     dec=x[(x.index>=d.TEST_START-pd.Timedelta(minutes=5))&(x.index<d.END)].copy()
     decisions=[(ts+pd.Timedelta(minutes=5),row) for ts,row in dec.iterrows()]
+    print('SIGNALS',int(dec.sigL.sum()),int(dec.sigS.sum()),'DECISIONS',len(decisions),flush=True)
     di=0; pending=None; lots=[]; cdir=0
     bal=np.ones(ns,float); peak=np.ones(ns,float); dd=np.zeros(ns,float)
     campaigns=adds=closed=0; wins=np.zeros(ns,int); pos=np.zeros(ns,float); neg=np.zeros(ns,float); rtot=np.zeros(ns,float); maxopen=0
@@ -45,8 +81,7 @@ def sim_multi(x,hours):
         eq=bal.copy()
         for z in lots:
             px=bid if z.d==1 else ask
-            norm=z.d*(px-z.entry)/z.risk
-            eq += z.risk_cash*norm
+            eq += z.risk_cash*(z.d*(px-z.entry)/z.risk)
         return eq
 
     for hh,hts in enumerate(hours,1):
@@ -57,7 +92,7 @@ def sim_multi(x,hours):
             if t>=d.END: break
             last_bid,last_ask=bid,ask
             while di<len(decisions) and decisions[di][0]<=t:
-                dt,row=decisions[di]; di+=1
+                _,row=decisions[di]; di+=1
                 midc=float(row['close'])
                 for z in lots:
                     if (not z.protected) and z.d*(midc-z.entry)/z.risk>=BE_R:
@@ -76,7 +111,7 @@ def sim_multi(x,hours):
                     st=min(sw-.1*avv,e-AF*avv) if direction==1 else max(sw+.1*avv,e+AF*avv)
                     rrisk=e-st if direction==1 else st-e
                     if rrisk>0 and rrisk/e<=.012 and len(lots)<MAX_LOTS:
-                        eq=np.maximum(0.,mtm_vec(bid,ask)); rc=eq*d.RISK; tg=e+direction*TP_R*rrisk
+                        rc=np.maximum(0.,mtm_vec(bid,ask))*d.RISK; tg=e+direction*TP_R*rrisk
                         lots.append(Lot(direction,e,st,rrisk,rc,tg,t)); maxopen=max(maxopen,len(lots)); cdir=direction
                         if isadd: adds+=1
                         else: campaigns+=1
@@ -93,39 +128,41 @@ def sim_multi(x,hours):
                 if raw_rr is None and t-z.opened>=pd.Timedelta(hours=HOLD_HOURS):
                     px=bid if z.d==1 else ask; raw_rr=z.d*(px-z.entry)/z.risk
                 if raw_rr is not None:
-                    rrs=raw_rr-EXTRAS
-                    bal += z.risk_cash*rrs; closed+=1; rtot+=rrs
-                    wins += (rrs>0)
-                    pos += np.where(rrs>0,rrs,0.)
-                    neg += np.where(rrs<0,-rrs,0.)
+                    rrs=raw_rr-EXTRAS; bal+=z.risk_cash*rrs; closed+=1; rtot+=rrs; wins+=(rrs>0); pos+=np.where(rrs>0,rrs,0.); neg+=np.where(rrs<0,-rrs,0.)
                 else: surv.append(z)
             lots=surv
             if not lots: cdir=0
-            eq=mtm_vec(bid,ask); peak=np.maximum(peak,eq); cur=np.where(peak>0,(peak-eq)/peak,0.); dd=np.maximum(dd,cur)
-        if hh%240==0: print('SIM_HOURS',hh,'/',len(hours),'closed',closed,flush=True)
+            eq=mtm_vec(bid,ask); peak=np.maximum(peak,eq); dd=np.maximum(dd,np.where(peak>0,(peak-eq)/peak,0.))
+        if hh%160==0: print('SIM_HOURS',hh,'/',len(hours),'closed',closed,flush=True)
     if np.isfinite(last_bid):
         for z in lots:
             px=last_bid if z.d==1 else last_ask; raw_rr=z.d*(px-z.entry)/z.risk; rrs=raw_rr-EXTRAS
             bal+=z.risk_cash*rrs; closed+=1; rtot+=rrs; wins+=(rrs>0); pos+=np.where(rrs>0,rrs,0.); neg+=np.where(rrs<0,-rrs,0.)
     out={}
     for j,extra in enumerate(EXTRAS):
-        key=f'BIDASK_PLUS_{extra:.2f}R'
-        out[key]={'lots':int(closed),'campaigns':int(campaigns),'adds':int(adds),'ret':float((bal[j]-1)*100),'wr':float(100*wins[j]/closed if closed else 0.),'pf':float(pos[j]/neg[j] if neg[j]>0 else 99.),'avgR':float(rtot[j]/closed if closed else 0.),'R_total':float(rtot[j]),'dd':float(100*dd[j]),'max_open':int(maxopen)}
+        out[f'BIDASK_PLUS_{extra:.2f}R']={'lots':int(closed),'campaigns':int(campaigns),'adds':int(adds),'ret':float((bal[j]-1)*100),'wr':float(100*wins[j]/closed if closed else 0.),'pf':float(pos[j]/neg[j] if neg[j]>0 else 99.),'avgR':float(rtot[j]/closed if closed else 0.),'R_total':float(rtot[j]),'dd':float(100*dd[j]),'max_open':int(maxopen)}
     return out
 
 
 def main():
-    os.makedirs(d.RAW,exist_ok=True); hours=d.hours_range(); print('DOWNLOAD_HOURS',len(hours),flush=True)
-    with ThreadPoolExecutor(max_workers=28) as ex:
-        fut=[ex.submit(d.fetch_hour,t) for t in hours]; done=valid=byt=0
+    os.makedirs(d.RAW,exist_ok=True); hours=expected_hours(); print('EXPECTED_TRADABLE_HOURS',len(hours),flush=True)
+    errors={}; done=valid=byt=0
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        fut=[ex.submit(robust_fetch_hour,t) for t in hours]
         for f in as_completed(fut):
-            _,p,n=f.result(); done+=1; valid+=int(p is not None); byt+=n
-            if done%240==0: print('DL',done,'/',len(hours),'valid',valid,'MB',round(byt/1e6,1),flush=True)
-    m1path,diag=d.make_m1(hours); x=build_signals(m1path); print('DUKA_DATA',diag,flush=True)
+            _,p,n,status=f.result(); done+=1; valid+=int(p is not None); byt+=n
+            if p is None: errors[status]=errors.get(status,0)+1
+            if done%120==0: print('DL',done,'/',len(hours),'valid',valid,'coverage',round(valid/done,3),'MB',round(byt/1e6,1),'errors',errors,flush=True)
+    coverage=valid/len(hours) if hours else 0.
+    print('DOWNLOAD_FINAL','valid',valid,'expected',len(hours),'coverage',coverage,'errors',errors,flush=True)
+    if coverage<MIN_COVERAGE:
+        raise RuntimeError(f'Dukascopy coverage {coverage:.3f} below required {MIN_COVERAGE:.2f}; reject run as data-incomplete')
+    m1path,diag=d.make_m1(hours); diag['expected_tradable_hours']=len(hours); diag['coverage']=coverage; diag['download_errors']=errors
+    x=build_signals(m1path); print('DUKA_DATA',diag,flush=True)
     out=sim_multi(x,hours)
     for k,v in out.items(): print(CANDIDATE,k,v,flush=True)
     print('RESULT_JSON_START')
-    print(json.dumps({'candidate':CANDIDATE,'source':'Dukascopy public XAUUSD BI5 bid/ask quote ticks','download_window':[str(d.DL_START),str(d.END)],'test_window':[str(d.TEST_START),str(d.END)],'data':diag,'edges':list(EDGES),'filters':{'vwap':VWAP_MODE,'activity_profile':'POC96 causal 32-bin proxy'},'params':{'atr_floor':AF,'beR':BE_R,'max_lots':MAX_LOTS,'targetR':TP_R,'hold_hours':HOLD_HOURS,'fresh_signal_add':True},'risk_rule':'0.36% executable bid/ask MTM equity per fresh lot; prior lots protected before add','results':out,'engine':'single tick pass, parallel equity accounting for all extra-cost scenarios; identical price-level trade events across scenarios','limitations':['Independent broker quote feed, not CME GC futures','Profile is quote-activity proxy, not COMEX traded volume-at-price','Six-week window validates execution sensitivity, not multi-year stability']},default=float))
+    print(json.dumps({'candidate':CANDIDATE,'source':'Dukascopy public XAUUSD BI5 bid/ask quote ticks','download_window':[str(d.DL_START),str(d.END)],'test_window':[str(d.TEST_START),str(d.END)],'data':diag,'edges':list(EDGES),'filters':{'vwap':VWAP_MODE,'activity_profile':'POC96 causal 32-bin proxy'},'params':{'atr_floor':AF,'beR':BE_R,'max_lots':MAX_LOTS,'targetR':TP_R,'hold_hours':HOLD_HOURS,'fresh_signal_add':True},'risk_rule':'0.36% executable bid/ask MTM equity per fresh lot; prior lots protected before add','results':out,'engine':'single tick pass; parallel equity accounting for cost stresses','quality_gate':f'Abort if valid-hour coverage < {MIN_COVERAGE:.0%}','limitations':['Independent broker quote feed, not CME GC futures','Profile is quote-activity proxy, not COMEX traded volume-at-price','Six-week window validates execution sensitivity, not multi-year stability']},default=float))
     print('RESULT_JSON_END')
 
 if __name__=='__main__': main()
