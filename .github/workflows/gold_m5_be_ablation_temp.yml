@@ -1,0 +1,28 @@
+name: Gold M5 BE Ablation Temp
+
+on:
+  push:
+    branches: [gold-backtest-temp-20260908]
+    paths:
+      - 'research/gold_m5_be_ablation.py'
+      - '.github/workflows/gold_m5_be_ablation_temp.yml'
+  workflow_dispatch:
+
+jobs:
+  be:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pandas numpy
+      - name: Sparse clone XAU M1 files only
+        run: |
+          git clone --depth 1 --filter=blob:none --no-checkout https://github.com/simom1/XAUUSD-history.git /tmp/xau
+          git -C /tmp/xau sparse-checkout init --no-cone
+          git -C /tmp/xau sparse-checkout set --no-cone 'Gold-Cash/XAUUSD/XAUUSD_M1_2020_2022.csv' 'Gold-Cash/XAUUSD/XAUUSD_M1_2023_2026.csv'
+          git -C /tmp/xau checkout main
+      - name: Run BE threshold ablation
+        run: python research/gold_m5_be_ablation.py
