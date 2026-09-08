@@ -25,7 +25,11 @@ jobs:
       - name: Download official BLS yearly calendars
         run: |
           for y in 2021 2022 2023 2024 2025 2026; do
-            curl -L --fail --retry 3 -A 'Mozilla/5.0' "https://www.bls.gov/schedule/$y/" -o "/tmp/bls_$y.html"
+            curl -L --fail --retry 3 --retry-all-errors \
+              -H 'Accept: text/html,application/xhtml+xml' \
+              -H 'Referer: https://www.bls.gov/schedule/' \
+              -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' \
+              "https://www.bls.gov/schedule/$y/home.htm" -o "/tmp/bls_$y.html"
           done
       - name: Run champion news blackout
         run: python research/gold_champion_bls_blackout.py
