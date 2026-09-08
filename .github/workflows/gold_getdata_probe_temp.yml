@@ -1,0 +1,25 @@
+name: Gold GetData Probe Temp
+
+on:
+  push:
+    branches: [gold-backtest-temp-20260908]
+    paths:
+      - '.github/workflows/gold_getdata_probe_temp.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download free XAUUSD M1 sample and inspect
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 'https://getdata.finance/samples/XAUUSD.csv' -o /tmp/XAUUSD.csv
+          ls -lh /tmp/XAUUSD.csv
+          wc -l /tmp/XAUUSD.csv
+          echo '--- HEAD ---'
+          head -3 /tmp/XAUUSD.csv
+          echo '--- TAIL ---'
+          tail -3 /tmp/XAUUSD.csv
