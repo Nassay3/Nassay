@@ -18,5 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check pandas numpy
+      - name: Download GetData sample
+        run: curl -L --fail --retry 3 'https://getdata.finance/samples/XAUUSD.csv' -o /tmp/XAUUSD.csv
       - name: Run frozen forward extension
         run: python research/gold_getdata_forward_extension.py
