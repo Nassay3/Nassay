@@ -26,11 +26,10 @@ def vwap_ladder(x, offset_hours=0, same_session=False):
     pv=typ*vol
     daykey=pd.Series(loc.strftime('%Y-%m-%d'),index=idx)
     iso=loc.isocalendar()
-    weekkey=pd.Series(iso.year.astype(str)+'-'+iso.week.astype(str),index=idx)
+    weekkey=pd.Series((iso.year.astype(str)+'-'+iso.week.astype(str)).to_numpy(),index=idx)
     mins=loc.hour*60+loc.minute
     sn=np.where(mins<480,'A',np.where(mins<870,'L','N'))
     sesskey=pd.Series(loc.strftime('%Y-%m-%d')+'_'+sn,index=idx)
-    slabel=pd.Series(sn,index=idx)
 
     def current_and_prior(group):
         cur=pv.groupby(group).cumsum()/vol.groupby(group).cumsum()
@@ -62,8 +61,6 @@ def vwap_ladder(x, offset_hours=0, same_session=False):
 
 def layer_masks(x,f):
     c=x.close.astype(float)
-    # A layer is bullish only if price is above BOTH current VWAP and prior VWAP close,
-    # AND current VWAP is above that prior close; bearish is the exact inverse.
     sL=(c>f['sv'])&(c>f['sp'])&(f['sv']>f['sp'])
     sS=(c<f['sv'])&(c<f['sp'])&(f['sv']<f['sp'])
     dL=(c>f['dv'])&(c>f['dp'])&(f['dv']>f['dp'])
@@ -101,20 +98,16 @@ def run():
     trb=bounds(idx,g.START,g.TRAIN_END); vab=bounds(idx,g.TRAIN_END,g.VAL_END); hob=bounds(idx,g.VAL_END,g.END); fullb=bounds(idx,g.START,g.END)
     fields={}
     for off in (0,3):
-        for same in (False,True):
-            fields[(off,same)]=layer_masks(x,vwap_ladder(x,off,same))
+        for same in (False,True): fields[(off,same)]=layer_masks(x,vwap_ladder(x,off,same))
 
     specs=[('POC_ONLY',0,False,'none','none')]
-    # Hard-entry ablations, each isolated.
     for off in (0,3):
       for same in (False,True):
         tag=f"{'UTC' if off==0 else 'RUH'}_{'SAME' if same else 'CHAIN'}"
         for mode in ('sess','day','week','dayweek','all','score2','rel','price'):
             specs.append((tag+'_'+mode.upper(),off,same,mode,'none'))
-        # Preserve campaigns and use VWAP only to qualify sequential additions.
         for mode in ('all','score2','dayweek'):
             specs.append((tag+'_ADD_'+mode.upper(),off,same,'none',mode))
-        # Moderate hybrid: score-2 to start, strict all-3 for adds.
         specs.append((tag+'_INIT2_ADDALL',off,same,'score2','all'))
 
     def mask(mode,Lside,f):
@@ -142,7 +135,6 @@ def run():
         print('SCREEN',name,'TR',round(tr['ret'],2),round(tr['pf'],3),'VA',round(va['ret'],2),round(va['pf'],3),flush=True)
 
     rows.sort(reverse=True,key=lambda r:r[0])
-    # Holdout is exposed only for benchmark + top 6 selected on Train+Validation.
     promoted=[]; picked=[]
     baseline=[r for r in rows if r[1]=='POC_ONLY'][0]; picked.append(baseline)
     for r in rows:
