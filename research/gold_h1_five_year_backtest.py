@@ -61,7 +61,6 @@ def prep():
     day=pd.Series(x.index.strftime('%Y-%m-%d'),index=x.index)
     iso=x.index.isocalendar(); week=pd.Series(iso.year.astype(str)+'-'+iso.week.astype(str),index=x.index)
     add_group_vwap(x,day,'day'); add_group_vwap(x,week,'week')
-    # Profile is causal: fixed 32 completed H1 bars and developing UTC day through current completed H1 bar.
     fpoc=np.full(len(x),np.nan);fvah=np.full(len(x),np.nan);fval=np.full(len(x),np.nan);dpoc=np.full(len(x),np.nan)
     day_start=0
     for i in range(len(x)):
@@ -75,7 +74,6 @@ def prep():
 
 
 def flags(x):
-    # H1 expansion core from prior robust candidate, now using the user's VWMA stack instead of SMA.
     closepos=(x.close-x.low)/x['range'].replace(0,np.nan)
     exp=x['range']>=2.0*x.avg_range14
     long_reg=(x.close>x.vwma21)&(x.vwma21>x.vwma84)&(x.vwma84>x.vwma175)&(x.vwma175>x.vwma480)
@@ -99,7 +97,7 @@ def flags(x):
 
 
 def trade_sim(x,ls,ss,style,long_only,start,end,max_hold=24):
-    ix=x.index; valid=np.flatnonzero(((ix>=start)&(ix<end)).to_numpy());
+    ix=x.index; valid=np.flatnonzero(np.asarray((ix>=start)&(ix<end)))
     if not len(valid):return [],[]
     i=max(valid[0],20); last=valid[-1]; rs=[];dur=[]
     while i<last-1:
