@@ -32,7 +32,7 @@ def simulate(x,L,S,start,end,beR,maxlots,tpR,maxhold=288):
         if pending is not None:
             d,si,is_add=pending;e=float(x.open.iloc[i]);sr=stop_for(x,si,d,e)
             if sr:
-                st,r=sr;lots.append(Lot(d,e,st,r,bal*g.RISK,e+d*tpR*r,i,False));
+                st,r=sr;lots.append(Lot(d,e,st,r,bal*g.RISK,e+d*tpR*r,i,False))
                 if is_add:adds+=1
                 else:campaigns+=1
                 cdir=d;last_add_i=i
@@ -56,7 +56,6 @@ def simulate(x,L,S,start,end,beR,maxlots,tpR,maxhold=288):
                 if bool(L.iloc[i]):pending=(1,i,False)
                 elif bool(S.iloc[i]):pending=(-1,i,False)
             elif len(lots)<maxlots and all(z.protected for z in lots) and i>last_add_i:
-                # Sequential pyramid: once every existing lot is protected, add on next bar.
                 pending=(cdir,i,True)
     cl=float(x.close.iloc[last])
     for z in lots:
@@ -67,15 +66,14 @@ def simulate(x,L,S,start,end,beR,maxlots,tpR,maxhold=288):
 
 def main():
     x=g.prep();L,S=base_signal(x);rows=[]
-    for be in [1.,1.5,2.]:
-      for ml in [3,4,6]:
-       for tp in [8.,10.,12.]:
+    candidates=[(be,ml,tp) for be in [1.,1.5] for ml in [4,6] for tp in [10.,12.]]
+    for be,ml,tp in candidates:
         tr=simulate(x,L,S,g.START,g.TRAIN_END,be,ml,tp);va=simulate(x,L,S,g.TRAIN_END,g.VAL_END,be,ml,tp)
         if tr and va:
             score=tr['ret']-1.1*tr['dd']+.7*va['ret']-.8*va['dd'];rows.append((score,be,ml,tp,tr,va))
     rows.sort(reverse=True,key=lambda z:z[0]);out=[]
-    for score,be,ml,tp,tr,va in rows:
+    for score,be,ml,tp,tr,va in rows[:4]:
         if va['ret']>0 and va['pf']>=1.08:
             ho=simulate(x,L,S,g.VAL_END,g.END,be,ml,tp);full=simulate(x,L,S,g.START,g.END,be,ml,tp);out.append({'beR':be,'max_lots':ml,'targetR':tp,'score':score,'train':tr,'val':va,'holdout':ho,'full':full})
-    print('RESULT_JSON_START');print(json.dumps({'risk_pct':.36,'rule':'add immediately after all existing lots protected; at most one unprotected lot','selection':'train+validation only; holdout untouched','results':out[:12],'target_1000_R':math.log(11)/g.RISK,'limitations':['M1 OHLC->M5','0.08R cost/lot','BE on close only','no news/DXY']},default=float));print('RESULT_JSON_END')
+    print('RESULT_JSON_START');print(json.dumps({'risk_pct':.36,'rule':'sequential add immediately after all existing lots protected; at most one unprotected lot','selection':'progressive 8-combo train+validation screen; holdout only top four','results':out,'target_1000_R':math.log(11)/g.RISK,'limitations':['M1 OHLC->M5','0.08R cost/lot','BE on close only','no news/DXY']},default=float));print('RESULT_JSON_END')
 if __name__=='__main__':main()
